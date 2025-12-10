@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const BOOTBOOT_MAGIC = "BOOT";
 
 // default virtual addresses for level 0 and 1 static loaders
@@ -42,11 +44,11 @@ pub const MMapEnt = extern struct {
 
     const Self = @This();
 
-    pub inline fn getPtr(self: *Self) u64 {
+    pub inline fn getPtr(self: *const Self) u64 {
         return self.ptr;
     }
 
-    pub inline fn getSizeInBytes(self: *Self) u64 {
+    pub inline fn getSizeInBytes(self: *const Self) u64 {
         return self.size & 0xFFFFFFFFFFFFFFF0;
     }
 
@@ -54,11 +56,11 @@ pub const MMapEnt = extern struct {
         return self.getSizeInBytes() / 4096;
     }
 
-    pub inline fn getType(self: *Self) MMapType {
+    pub inline fn getType(self: *const Self) MMapType {
         return @as(MMapType, @enumFromInt(@as(u4, @truncate(self.size))));
     }
 
-    pub inline fn isFree(self: *Self) bool {
+    pub inline fn isFree(self: *const Self) bool {
         return (self.size & 0xF) == 1;
     }
 };
@@ -78,6 +80,10 @@ pub const MMapType = enum(u4) {
 };
 
 pub const INITRD_MAXSIZE = 16; // Mb
+
+pub fn Slice(comptime T: type) type {
+    return struct { len: usize, ptr: *T };
+}
 
 pub const BOOTBOOT = extern struct {
     magic: [4]u8 align(1),
@@ -120,4 +126,12 @@ pub const BOOTBOOT = extern struct {
     } align(1),
 
     mmap: MMapEnt align(1),
+
+    pub inline fn mmap_entry_count(self: *BOOTBOOT) usize {
+        return (self.size - 128) / 16;
+    }
+
+    pub inline fn mmap_entries(self: *BOOTBOOT) []MMapEnt {
+        return @as([*]MMapEnt, (&self.mmap)[0..0])[0..self.mmap_entry_count()];
+    }
 };

@@ -7,7 +7,7 @@ include config.mk
 #	qemu-system-x86_64 -drive file=$(OUT_DIR)/$(OSNAME)-bios.img,format=raw -serial stdio
 
 qemu-cd: dump-config dump-deps disk
-	qemu-system-$(ARCH) -cdrom $(OUT_DIR)/$(OSNAME)-$(FW_LOADER).img -debugcon stdio
+	qemu-system-$(ARCH) -cdrom $(OUT_DIR)/$(OSNAME)-$(FW_LOADER).img -debugcon stdio -m 1G
 
 # grubcdrom: grub.iso
 # 	qemu-system-x86_64 -cdrom grub.iso -serial stdio

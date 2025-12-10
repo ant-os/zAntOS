@@ -63,7 +63,7 @@ fn inb(port: u16) callconv(.c) u8 {
     );
 }
 
-fn outb(port: u16, value: u8) callconv(.c) void {
+fn outb(port: u16, value: u8) void {
     asm volatile (
         \\ outb %al, %dx
         :
@@ -75,32 +75,97 @@ fn outb(port: u16, value: u8) callconv(.c) void {
 const DirectSerialPort = struct {
     port: u16,
 
-    const Writer = std.io.Writer();
+    pub fn new(port: u16) DirectSerialPort {
+        return .{ .port = port };
+    }
 
-    fn write(self: *@This(), data: []const u8) usize {
-        _ = self.port;
-        _ = data;
-        unreachable;
+    const Writer = std.io.GenericWriter(u16, error{}, write);
+
+    pub fn write(port: u16, data: []const u8) !usize {
+        for (data) |byte| {
+            outb(port, byte);
+        }
+
+        return data.len;
+    }
+
+    fn writer(self: *const @This()) Writer {
+        return .{ .context = self.port };
     }
 };
 
-// export fn kmain() callconv(.c) noreturn {}
+var g_buffer: [1]u8 = .{0};
+const Port2 = struct {
+    port: u16,
+
+    // pub fn writer(port: u16) Writer {
+    //     return .{ .port = port, .interface = std.Io.Writer{
+    //         .buffer = &g_buffer,
+    //         .vtable = &vtable,
+    //     } };
+    // }
+
+    //const vtable = std.Io.Writer.VTable{ .drain = Writer.drain, .flush = std.io.Writer.noopFlush, .rebase = Writer.rebase };
+    pub const Writer = struct {
+        port: u16,
+        interface: std.Io.Writer,
+
+        fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
+            const self: *Writer = @fieldParentPtr("interface", io_w);
+
+            _ = splat;
+
+            outb(0xe9, '+');
+
+            return try DirectSerialPort.write(self.port, data[0]);
+        }
+
+        fn rebase(w: *std.Io.Writer, _: usize, _: usize) !void {
+            _ = w;
+        }
+    };
+};
+
+fn kmain() !void {
+    // _ = try DirectSerialPort.write(0xe9, "Running main...");
+    // var buf: [64]u8 = std.mem.zeroes([64]u8);
+    //var debugcon = Port2.writer(0xe9);
+
+    const debugconp = DirectSerialPort.new(0xe9);
+    try debugconp.writer().print("BOOTBOOT = {any}\n", .{bootboot});
+
+    for (bootboot.mmap_entries()) |entry| {
+        try debugconp.writer().print("0x{X}-0x{X} is of type {any}\n", .{ entry.getPtr(), entry.getPtr() + entry.getSizeInBytes(), entry.getType() });
+    }
+
+    // _ = try DirectSerialPort.write(0xe9, "2");
+
+    // _ = try intf.write("Simple Message");
+    // _ = try intf.print("test", .{});
+
+    //   _ = try debugcon.writer().write("Hello, World!");
+
+}
 
 // Entry point, called by BOOTBOOT Loader
 export fn _start() callconv(.c) noreturn {
     // NOTE: this code runs on all cores in parallel
-
-    const message = "Hello World!";
-
-    for (message) |char| {
-        outb(0xe9, char);
-    }
 
     const s = bootboot.fb_scanline;
     const w = bootboot.fb_width;
     const h = bootboot.fb_height;
     var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
 
+    _ = kmain() catch {
+        outb(0xe9, 'E');
+        // @panic("kmain failed");
+    };
+    //  var debugcon = Port2.writer(0xe9);
+
+    // var intf = &debugcon.interface;
+
+    //_ = try intf.write("Simple Message");
+    // _ = try intf.print("test", .{});*/
     if (s > 0) {
         // cross-hair to see screen dimension detected correctly
         for (0..h) |y| {
