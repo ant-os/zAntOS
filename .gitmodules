@@ -1,0 +1,3 @@
+[submodule "third-party/bootboot"]
+	path = third-party/bootboot
+	url = https://gitlab.com/bztsrc/bootboot.git
