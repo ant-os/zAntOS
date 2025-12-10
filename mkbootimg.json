@@ -1,5 +1,5 @@
 {
-    "disksize": 128,
+    "disksize": 64,
     "config": "./bootboot.config",
     "initrd": { "type": "cpio", "gzip": true, "directory": "build/initrd" },
     "iso9660": true,
