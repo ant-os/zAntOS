@@ -1,4 +1,5 @@
-kernel/.zig-cache/**
+kernel/.zig-cache/*
 build
 *.local
+output
 
