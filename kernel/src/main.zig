@@ -55,11 +55,46 @@ pub inline fn puts(comptime string: []const u8) void {
     }
 }
 
+fn inb(port: u16) callconv(.c) u8 {
+    return asm (
+        \\ inb %al, %dx
+        : [ret] "={al}" (-> u8),
+        : [port] "{dx}" (port),
+    );
+}
+
+fn outb(port: u16, value: u8) callconv(.c) void {
+    asm volatile (
+        \\ outb %al, %dx
+        :
+        : [value] "{al}" (value),
+          [port] "{dx}" (port),
+    );
+}
+
+const DirectSerialPort = struct {
+    port: u16,
+
+    const Writer = std.io.Writer();
+
+    fn write(self: *@This(), data: []const u8) usize {
+        _ = self.port;
+        _ = data;
+        unreachable;
+    }
+};
+
 // export fn kmain() callconv(.c) noreturn {}
 
 // Entry point, called by BOOTBOOT Loader
 export fn _start() callconv(.c) noreturn {
     // NOTE: this code runs on all cores in parallel
+
+    const message = "Hello World!";
+
+    for (message) |char| {
+        outb(0xe9, char);
+    }
 
     const s = bootboot.fb_scanline;
     const w = bootboot.fb_width;
@@ -96,7 +131,7 @@ export fn _start() callconv(.c) noreturn {
         }
 
         // say hello
-        puts("Hello from the AntOS rewrite in zig.");
+        puts("Welcome to zAntOS, the zig rewrite of AntOS (e.g. AntOS v3)");
     }
 
     // hang for now

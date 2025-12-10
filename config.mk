@@ -12,8 +12,9 @@ DEVTOOLS_DIR := devtools
 3RDP_DIR := third-party
 
 dump-config: 
-	@echo Operating Sytem: $(OSNAME)
+	@echo Operating System: $(OSNAME)
 	@echo Architecture: $(ARCH)
 	@echo Firmware Loader: $(FW_LOADER)
-	@echo Kernel Image: $(KERNEL_EXE)
+	@echo Kernel Image File: $(KERNEL_EXE)
+
 endif

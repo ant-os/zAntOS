@@ -8,5 +8,5 @@ setup:
 	@rm -Rdvf $(SETUP_DIRS)
 	@mkdir -vp $(SETUP_DIRS)
 
-clean: clean-kernel
+clean-build: clean-kernel
 	@rm -rfv $(BUILD_DIR)/* 2>/dev/null || true
