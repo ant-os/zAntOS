@@ -52,7 +52,7 @@ pub const MMapEnt = extern struct {
         return self.size & 0xFFFFFFFFFFFFFFF0;
     }
 
-    pub inline fn getSizeIn4KiBPages(self: *Self) u64 {
+    pub inline fn getSizeIn4KiBPages(self: *const Self) u64 {
         return self.getSizeInBytes() / 4096;
     }
 

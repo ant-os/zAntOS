@@ -55,7 +55,7 @@ pub inline fn puts(comptime string: []const u8) void {
     }
 }
 
-fn inb(port: u16) callconv(.c) u8 {
+fn inb(port: u16) u8 {
     return asm (
         \\ inb %al, %dx
         : [ret] "={al}" (-> u8),
@@ -72,10 +72,10 @@ fn outb(port: u16, value: u8) void {
     );
 }
 
-const DirectSerialPort = struct {
+const DirectPortIO = struct {
     port: u16,
 
-    pub fn new(port: u16) DirectSerialPort {
+    pub fn new(port: u16) DirectPortIO {
         return .{ .port = port };
     }
 
@@ -94,8 +94,7 @@ const DirectSerialPort = struct {
     }
 };
 
-var g_buffer: [1]u8 = .{0};
-const Port2 = struct {
+const NewDirectPortIO = struct {
     port: u16,
 
     // pub fn writer(port: u16) Writer {
@@ -115,36 +114,18 @@ const Port2 = struct {
 
             _ = splat;
 
-            outb(0xe9, '+');
-
-            return try DirectSerialPort.write(self.port, data[0]);
-        }
-
-        fn rebase(w: *std.Io.Writer, _: usize, _: usize) !void {
-            _ = w;
+            return try DirectPortIO.write(self.port, data[0]);
         }
     };
 };
 
 fn kmain() !void {
-    // _ = try DirectSerialPort.write(0xe9, "Running main...");
-    // var buf: [64]u8 = std.mem.zeroes([64]u8);
-    //var debugcon = Port2.writer(0xe9);
-
-    const debugconp = DirectSerialPort.new(0xe9);
+    const debugconp = DirectPortIO.new(0xe9);
     try debugconp.writer().print("BOOTBOOT = {any}\n", .{bootboot});
 
-    for (bootboot.mmap_entries()) |entry| {
-        try debugconp.writer().print("0x{X}-0x{X} is of type {any}\n", .{ entry.getPtr(), entry.getPtr() + entry.getSizeInBytes(), entry.getType() });
+    for (bootboot.mmap_entries()) |entry| { // for some REASON the zig formatter love LONG lines...
+        try debugconp.writer().print("0x{X}-0x{X} ({d} KiB, {d} 4Kib Pages) is of type {any}\n", .{ entry.getPtr(), entry.getPtr() + entry.getSizeInBytes(), entry.getSizeInBytes() / 1025, entry.getSizeIn4KiBPages(), entry.getType() });
     }
-
-    // _ = try DirectSerialPort.write(0xe9, "2");
-
-    // _ = try intf.write("Simple Message");
-    // _ = try intf.print("test", .{});
-
-    //   _ = try debugcon.writer().write("Hello, World!");
-
 }
 
 // Entry point, called by BOOTBOOT Loader
@@ -157,8 +138,7 @@ export fn _start() callconv(.c) noreturn {
     var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
 
     _ = kmain() catch {
-        outb(0xe9, 'E');
-        // @panic("kmain failed");
+        unreachable;
     };
     //  var debugcon = Port2.writer(0xe9);
 
@@ -196,9 +176,9 @@ export fn _start() callconv(.c) noreturn {
         }
 
         // say hello
-        puts("Welcome to zAntOS, the zig rewrite of AntOS (e.g. AntOS v3)");
+        puts("Welcome to zAntOS, the zig rewrite of AntOS (e.g. AntOS v3).");
     }
 
-    // hang for now
+    // HALT IT ALL!!!!
     while (true) {}
 }

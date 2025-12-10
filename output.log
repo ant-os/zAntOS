@@ -1,0 +1,29 @@
+Operating System: zAntOS
+Architecture: x86_64
+Firmware Loader: bios
+Kernel Image File: AntOSKrnl.bin
+Build-time Tools: mkbootimg
+Runtime Dependencies (Static): bootboot-loader
+devtools/mkbootimg check build/kernel
+File format:  ELF64
+Architecture: x86_64
+Entry point:  ffffffffffe02040 OK
+mmio:         fffffffff8000000 OK
+fb:           fffffffffc000000 OK
+bootboot:     ffffffffffe00000 OK
+environment:  ffffffffffe01000 OK
+Load segment: ffffffffffe02000 size 38K offs 1000 OK
+Complies with BOOTBOOT Protocol Level 1 and 2, valid dynamic addresses
+'build/kernel' -> 'build/initrd/AntOSKrnl.bin'
+devtools/mkbootimg mkbootimg.json output/x86_64/zAntOS-bios.img
+[Kmkbootimg: output/x86_64/zAntOS-bios.img saved.
+qemu-system-x86_64 -cdrom output/x86_64/zAntOS-bios.img -debugcon stdio -m 1G
+BOOTBOOT = .{ .magic = { 66, 79, 79, 84 }, .size = 256, .protocol = 1, .fb_type = 0, .numcores = 1, .bspid = 0, .timezone = 0, .datetime = { 32, 37, 18, 16, 35, 40, 34, 0 }, .initrd_ptr = 1265664, .initrd_size = 937984, .fb_ptr = 4244635648, .fb_size = 1920000, .fb_width = 800, .fb_height = 600, .fb_scanline = 3200, .arch = .{ .x86_64 = .{ .acpi_ptr = 1073618002, .smbi_ptr = 0, .efi_ptr = 0, .mp_ptr = 1004672, .unused0 = 0, .unused1 = 0, .unused2 = 0, .unused3 = 0 }, .aarch64 = .{ .acpi_ptr = 1073618002, .mmio_ptr = 0, .efi_ptr = 0, .unused0 = 1004672, .unused1 = 0, .unused2 = 0, .unused3 = 0, .unused4 = 0 } }, .mmap = .{ .ptr = 86016, .size = 568321 } }
+0x15000-0x9FC00 (554 KiB, 138 4Kib Pages) is of type .MMAP_FREE
+0x9FC00-0xA0000 (0 KiB, 0 4Kib Pages) is of type .MMAP_USED
+0xF0000-0x100000 (63 KiB, 16 4Kib Pages) is of type .MMAP_USED
+0x100000-0x135000 (211 KiB, 53 4Kib Pages) is of type .MMAP_FREE
+0x224000-0x3FFE0000 (1045235 KiB, 261564 4Kib Pages) is of type .MMAP_FREE
+0x3FFE0000-0x40000000 (127 KiB, 32 4Kib Pages) is of type .MMAP_ACPI
+0xFFFC0000-0x100000000 (255 KiB, 64 4Kib Pages) is of type .MMAP_USED
+0xFD00000000-0x10000000000 (12570635 KiB, 3145728 4Kib Pages) is of type .MMAP_USED
