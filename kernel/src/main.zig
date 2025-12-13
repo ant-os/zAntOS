@@ -55,7 +55,7 @@ pub inline fn puts(comptime string: []const u8) void {
     }
 }
 
-fn inb(port: u16) u8 {
+pub fn inb(port: u16) u8 {
     return asm (
         \\ inb %al, %dx
         : [ret] "={al}" (-> u8),
@@ -63,9 +63,9 @@ fn inb(port: u16) u8 {
     );
 }
 
-fn outb(port: u16, value: u8) void {
+pub fn outb(port: u16, value: u8) void {
     asm volatile (
-        \\ outb %al, %dx
+        \\ outb %[value], %[port]
         :
         : [value] "{al}" (value),
           [port] "{dx}" (port),
@@ -82,6 +82,14 @@ const DirectPortIO = struct {
     const Writer = std.io.GenericWriter(u16, error{}, write);
 
     pub fn write(port: u16, data: []const u8) !usize {
+        for (data) |byte| {
+            outb(port, byte);
+        }
+
+        return data.len;
+    }
+
+    pub fn writeString(port: u16, data: []const u8) usize {
         for (data) |byte| {
             outb(port, byte);
         }
@@ -119,26 +127,46 @@ const NewDirectPortIO = struct {
     };
 };
 
-fn kmain() !void {
+pub noinline fn kmain() !void {
     const debugconp = DirectPortIO.new(0xe9);
-    try debugconp.writer().print("BOOTBOOT = {any}\n", .{bootboot});
+    const writer = debugconp.writer();
 
-    for (bootboot.mmap_entries()) |entry| { // for some REASON the zig formatter love LONG lines...
-        try debugconp.writer().print("0x{X}-0x{X} ({d} KiB, {d} 4Kib Pages) is of type {any}\n", .{ entry.getPtr(), entry.getPtr() + entry.getSizeInBytes(), entry.getSizeInBytes() / 1025, entry.getSizeIn4KiBPages(), entry.getType() });
-    }
+    // _ = try writer.write("This written using .write().\n");
+    try std.fmt.format(writer, "stuff BOOTBOOT tells us: {any}\n", .{bootboot});
+
+    return;
+
+    std.DynamicBitSetUnmanaged
+
+    // for (bootboot.mmap_entries()) |entry| { // for some REASON the zig formatter love LONG lines...
+    //     try debugconp.writer().print("0x{X}-0x{X} ({d} KiB, {d} 4Kib Pages) is of type {any}\n", .{ entry.getPtr(), entry.getPtr() + entry.getSizeInBytes(), entry.getSizeInBytes() / 1025, entry.getSizeIn4KiBPages(), entry.getType() });
+    // }
 }
 
+pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
+    _ = addr;
+    _ = trace;
+
+    _ = DirectPortIO.writeString(0xe9, msg);
+    _ = DirectPortIO.writeString(0xe9, "\n^ PANIC IN EARLY KERNEL CODE\n");
+
+    while (true) {
+        asm volatile ("hlt");
+    }
+}
 // Entry point, called by BOOTBOOT Loader
 export fn _start() callconv(.c) noreturn {
     // NOTE: this code runs on all cores in parallel
 
-    const s = bootboot.fb_scanline;
-    const w = bootboot.fb_width;
-    const h = bootboot.fb_height;
-    var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
+    // const s = bootboot.fb_scanline;
+    // const w = bootboot.fb_width;
+    // const h = bootboot.fb_height;
+    // var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
+
+    outb(0xe9, '.');
 
     _ = kmain() catch {
-        unreachable;
+        outb(0xe9, 'e');
     };
     //  var debugcon = Port2.writer(0xe9);
 
@@ -146,39 +174,41 @@ export fn _start() callconv(.c) noreturn {
 
     //_ = try intf.write("Simple Message");
     // _ = try intf.print("test", .{});*/
-    if (s > 0) {
-        // cross-hair to see screen dimension detected correctly
-        for (0..h) |y| {
-            framebuffer[(s * y + w * 2) / @sizeOf(u32)] = 0x00FFFFFF;
-        }
+    // if (s > 0) {
+    //     // cross-hair to see screen dimension detected correctly
+    //     for (0..h) |y| {
+    //         framebuffer[(s * y + w * 2) / @sizeOf(u32)] = 0x00FFFFFF;
+    //     }
 
-        for (0..w) |x| {
-            framebuffer[(s * (h / 2) + x * 4) / @sizeOf(u32)] = 0x00FFFFFF;
-        }
+    //     for (0..w) |x| {
+    //         framebuffer[(s * (h / 2) + x * 4) / @sizeOf(u32)] = 0x00FFFFFF;
+    //     }
 
-        // red, green, blue boxes in order
-        inline for (0..20) |y| {
-            for (0..20) |x| {
-                framebuffer[(s * (y + 20) + (x + 20) * 4) / @sizeOf(u32)] = 0x00FF0000;
-            }
-        }
+    //     // red, green, blue boxes in order
+    //     inline for (0..20) |y| {
+    //         for (0..20) |x| {
+    //             framebuffer[(s * (y + 20) + (x + 20) * 4) / @sizeOf(u32)] = 0x00FF0000;
+    //         }
+    //     }
 
-        inline for (0..20) |y| {
-            for (0..20) |x| {
-                framebuffer[(s * (y + 20) + (x + 50) * 4) / @sizeOf(u32)] = 0x0000FF00;
-            }
-        }
+    //     inline for (0..20) |y| {
+    //         for (0..20) |x| {
+    //             framebuffer[(s * (y + 20) + (x + 50) * 4) / @sizeOf(u32)] = 0x0000FF00;
+    //         }
+    //     }
 
-        inline for (0..20) |y| {
-            for (0..20) |x| {
-                framebuffer[(s * (y + 20) + (x + 80) * 4) / @sizeOf(u32)] = 0x000000FF;
-            }
-        }
+    //     inline for (0..20) |y| {
+    //         for (0..20) |x| {
+    //             framebuffer[(s * (y + 20) + (x + 80) * 4) / @sizeOf(u32)] = 0x000000FF;
+    //         }
+    //     }
 
-        // say hello
-        puts("Welcome to zAntOS, the zig rewrite of AntOS (e.g. AntOS v3).");
-    }
+    //     // say hello
+    //     puts("Welcome to zAntOS, the zig rewrite of AntOS (e.g. AntOS v3).");
+    // }*/
 
     // HALT IT ALL!!!!
-    while (true) {}
+    while (true) {
+        asm volatile ("hlt");
+    }
 }

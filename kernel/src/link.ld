@@ -30,10 +30,10 @@
 
 ENTRY(_start)
 
-mmio        = 0xfffffffff8000000;              /* these are configurable for level 2 loaders */
+PROVIDE(mmio        = ABSOLUTE(0xfffffffff8000000));
 fb          = 0xfffffffffc000000;
 bootboot    = 0xffffffffffe00000;
-environment = 0xffffffffffe01000;
+PROVIDE(environment = ABSOLUTE(0xffffffffffe01000));
 /* initstack = 1024; */
 PHDRS
 {
@@ -53,5 +53,5 @@ SECTIONS
         *(COMMON)
     } :boot
 
-    /DISCARD/ : { *(.eh_frame) *(.comment) }
+/DISCARD/ : { *(.eh_frame) *(.comment) }
 }
