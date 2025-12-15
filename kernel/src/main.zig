@@ -1,12 +1,10 @@
 const std = @import("std");
-const BOOTBOOT = @import("bootboot.zig").BOOTBOOT;
+const bootboot = @import("bootboot.zig");
+const io = @import("io.zig");
+const memory = @import("memory.zig");
+const pageFrameAllocator = @import("pageFrameAllocator.zig");
 
 const fontEmbedded = @embedFile("font.psf");
-
-// imported virtual addresses, see linker script
-extern var bootboot: BOOTBOOT; // see bootboot.zig
-extern var environment: [4096]u8; // configuration, UTF-8 text key=value pairs
-extern var fb: u8; // linear framebuffer mapped
 
 // Display text on screen
 const PsfFont = packed struct {
@@ -20,140 +18,52 @@ const PsfFont = packed struct {
     width: u32, // width in pixels
 };
 
-// function to display a string
-pub inline fn puts(comptime string: []const u8) void {
-    @setRuntimeSafety(false);
-    const font: PsfFont = @bitCast(fontEmbedded[0..@sizeOf(PsfFont)].*);
-    const bytesperline = (font.width + 7) / 8;
-    var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
-    for (string, 0..) |char, i| {
-        var offs = i * (font.width + 1) * 4;
-        var idx = if (char > 0 and char < font.numglyph) blk: {
-            break :blk font.headersize + (char * font.bytesperglyph);
-        } else blk: {
-            break :blk font.headersize + (0 * font.bytesperglyph);
-        };
-
-        for (0..font.height) |_| {
-            var line = offs;
-            var mask = @as(u32, 1) << @as(u5, @intCast(font.width - 1));
-
-            for (0..font.width) |_| {
-                if ((fontEmbedded[idx] & mask) == 0) {
-                    framebuffer[line / @sizeOf(u32)] = 0x000000;
-                } else {
-                    framebuffer[line / @sizeOf(u32)] = 0xFFFFFF;
-                }
-                mask >>= 1;
-                line += 4;
-            }
-
-            framebuffer[line / @sizeOf(u32)] = 0;
-            idx += bytesperline;
-            offs += bootboot.fb_scanline;
-        }
-    }
-}
-
-pub fn inb(port: u16) u8 {
-    return asm (
-        \\ inb %al, %dx
-        : [ret] "={al}" (-> u8),
-        : [port] "{dx}" (port),
-    );
-}
-
-pub fn outb(port: u16, value: u8) void {
-    asm volatile (
-        \\ outb %[value], %[port]
-        :
-        : [value] "{al}" (value),
-          [port] "{dx}" (port),
-    );
-}
-
-const DirectPortIO = struct {
-    port: u16,
-
-    pub fn new(port: u16) DirectPortIO {
-        return .{ .port = port };
-    }
-
-    const Writer = std.io.GenericWriter(u16, error{}, write);
-
-    pub fn write(port: u16, data: []const u8) !usize {
-        for (data) |byte| {
-            outb(port, byte);
-        }
-
-        return data.len;
-    }
-
-    pub fn writeString(port: u16, data: []const u8) usize {
-        for (data) |byte| {
-            outb(port, byte);
-        }
-
-        return data.len;
-    }
-
-    fn writer(self: *const @This()) Writer {
-        return .{ .context = self.port };
-    }
-};
-
-const NewDirectPortIO = struct {
-    port: u16,
-
-    // pub fn writer(port: u16) Writer {
-    //     return .{ .port = port, .interface = std.Io.Writer{
-    //         .buffer = &g_buffer,
-    //         .vtable = &vtable,
-    //     } };
-    // }
-
-    //const vtable = std.Io.Writer.VTable{ .drain = Writer.drain, .flush = std.io.Writer.noopFlush, .rebase = Writer.rebase };
-    pub const Writer = struct {
-        port: u16,
-        interface: std.Io.Writer,
-
-        fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
-            const self: *Writer = @fieldParentPtr("interface", io_w);
-
-            _ = splat;
-
-            return try DirectPortIO.write(self.port, data[0]);
-        }
-    };
-};
-
 pub noinline fn kmain() !void {
-    const debugconp = DirectPortIO.new(0xe9);
+    const debugconp = io.DirectPortIO.new(0xe9);
     const writer = debugconp.writer();
 
     // _ = try writer.write("This written using .write().\n");
-    try std.fmt.format(writer, "stuff BOOTBOOT tells us: {any}\n", .{bootboot});
+    try std.fmt.format(writer, "stuff BOOTBOOT tells us: {any}\n", .{bootboot.bootboot});
 
-    return;
+    try debugconp.writer().print("Total: {d}GiB\n", .{memory.KePhysicalMemorySize() / 1024 / 1024 / 1024});
 
-    std.DynamicBitSetUnmanaged
+    try pageFrameAllocator.init();
 
-    // for (bootboot.mmap_entries()) |entry| { // for some REASON the zig formatter love LONG lines...
-    //     try debugconp.writer().print("0x{X}-0x{X} ({d} KiB, {d} 4Kib Pages) is of type {any}\n", .{ entry.getPtr(), entry.getPtr() + entry.getSizeInBytes(), entry.getSizeInBytes() / 1025, entry.getSizeIn4KiBPages(), entry.getType() });
-    // }
+    const myPage = try pageFrameAllocator.requestPage();
+
+    try debugconp.writer().print("\nmy page: {d} ({x})\n", .{ myPage, myPage * 0x1000 });
+
+    try debugconp.writer().print("Allocated Page: {x}\n", .{(try pageFrameAllocator.requestPage()) * 0x1000});
+
+    try debugconp.writer().print("Used Memory: {d}/{d} KiB\n", .{
+        pageFrameAllocator.getUsedMemory() / 1024,
+        memory.KePhysicalMemorySize() / 1024,
+    });
+
+    try debugconp.writer().print("Free Memory: {d}/{d} KiB\n", .{
+        pageFrameAllocator.getFreeMemory() / 1024,
+        memory.KePhysicalMemorySize() / 1024,
+    });
+
+    while (true) {
+        const c = io.inb(0xe9);
+
+        if (std.ascii.isAlphabetic(c))
+            io.outb(0xe9, c);
+    }
 }
 
 pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
-    _ = addr;
     _ = trace;
+    _ = addr;
 
-    _ = DirectPortIO.writeString(0xe9, msg);
-    _ = DirectPortIO.writeString(0xe9, "\n^ PANIC IN EARLY KERNEL CODE\n");
-
+    _ = io.DirectPortIO.writeString(0xe9, msg);
+    _ = io.DirectPortIO.writeString(0xe9, "\n^ PANIC IN EARLY KERNEL CODE\n");
     while (true) {
         asm volatile ("hlt");
     }
 }
+
 // Entry point, called by BOOTBOOT Loader
 export fn _start() callconv(.c) noreturn {
     // NOTE: this code runs on all cores in parallel
@@ -163,10 +73,16 @@ export fn _start() callconv(.c) noreturn {
     // const h = bootboot.fb_height;
     // var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
 
-    outb(0xe9, '.');
+    io.outb(0xe9, '.');
 
-    _ = kmain() catch {
-        outb(0xe9, 'e');
+    _ = kmain() catch |e| {
+        io.DirectPortIO.new(0xe9).writer().print("\n\nkmain() failed with error: {any}\n", .{e}) catch {
+            @panic("kmain() returned an error.");
+        };
+
+        while (true) {
+            asm volatile ("hlt");
+        }
     };
     //  var debugcon = Port2.writer(0xe9);
 

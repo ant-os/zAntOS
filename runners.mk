@@ -9,7 +9,7 @@ MEMORY_SIZE ?= 1G
 #	qemu-system-x86_64 -drive file=$(OUT_DIR)/$(OSNAME)-bios.img,format=raw -serial stdio
 
 qemu-cd: dump-config dump-deps disk
-	qemu-system-$(ARCH) -cdrom $(OUT_DIR)/$(OSNAME)-$(FW_LOADER).img -debugcon stdio -m 1G -s
+	qemu-system-$(ARCH) -cdrom $(OUT_DIR)/$(OSNAME)-$(FW_LOADER).img -debugcon stdio -m 500M -s
 		
 
 # grubcdrom: grub.iso
