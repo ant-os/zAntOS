@@ -136,6 +136,6 @@ pub const BOOTBOOT = extern struct {
     }
 
     pub inline fn mmap_entries(self: *BOOTBOOT) []MMapEnt {
-        return @as([*]MMapEnt, (&self.mmap)[0..0])[0..self.mmap_entry_count()];
+        return @as([*]MMapEnt, (&self.mmap)[0..0])[0 .. self.mmap_entry_count() - 1];
     }
 };

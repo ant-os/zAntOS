@@ -2,16 +2,17 @@ const std = @import("std");
 const bootboot = @import("bootboot.zig");
 const memory = @import("memory.zig");
 const io = @import("io.zig");
+const klog = std.log.scoped(.kernel);
 
 var buffer: []u8 = undefined;
 var freePages: usize = 0;
 var usedPages: usize = 0;
 
 pub fn init() !void {
+    klog.info("Initalizing Page Bitmap...", .{});
+
     const pages = (memory.KePhysicalMemorySize() / 0x1000) + 1;
     const needed = requiredMemory(pages + 1);
-
-    var debugcon = io.DirectPortIO.new(0xe9).writer();
 
     var bestBase: usize = 0;
     var bestSize: usize = std.math.maxInt(usize);
@@ -21,18 +22,12 @@ pub fn init() !void {
             bestBase = entry.ptr;
             bestSize = entry.size;
         }
-
-        try debugcon.print("{x} ({d} KiB): {any}\n", .{ entry.getPtr(), entry.getSizeInBytes() / 1024, entry.getType() });
     }
 
     if (bestSize == std.math.maxInt(usize))
         return error.FailedInitalizedPageBitmap;
 
-    try debugcon.print("Found: {x} with size {d}", .{ bestBase, bestSize });
-
     buffer = @as([*]u8, @ptrFromInt(bestBase))[0..needed];
-
-    // try debugcon.print("Test123", .{});
 
     @memset(buffer, 0xFF);
 

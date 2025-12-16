@@ -3,54 +3,55 @@ const bootboot = @import("bootboot.zig");
 const io = @import("io.zig");
 const memory = @import("memory.zig");
 const pageFrameAllocator = @import("pageFrameAllocator.zig");
+const klog = std.log.scoped(.kernel);
+const paging = @import("paging.zig");
 
 const fontEmbedded = @embedFile("font.psf");
 
-// Display text on screen
-const PsfFont = packed struct {
-    magic: u32, // magic bytes to identify PSF
-    version: u32, // zero
-    headersize: u32, // offset of bitmaps in file, 32
-    flags: u32, // 0 if there's no unicode table
-    numglyph: u32, // number of glyphs
-    bytesperglyph: u32, // size of each glyph
-    height: u32, // height in pixels
-    width: u32, // width in pixels
-};
+pub const std_options: std.Options = .{ .log_level = .debug, .logFn = kernelLog };
+pub fn kernelLog(
+    comptime message_level: std.log.Level,
+    comptime scope: @TypeOf(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    io.DirectPortIO.new(0xe9).writer().print(std.fmt.comptimePrint("[{s}] {s}: {s}\n", .{ @tagName(message_level), @tagName(scope), format }), args) catch {
+        io.DirectPortIO.writeString(0xe9, "[<log internal error>] format = ");
+        io.DirectPortIO.writeString(0xe9, format);
+        io.outb(0xe9, '\n');
+    };
+}
 
 pub noinline fn kmain() !void {
-    const debugconp = io.DirectPortIO.new(0xe9);
-    const writer = debugconp.writer();
+    klog.info("Starting zAntOS...", .{});
 
-    // _ = try writer.write("This written using .write().\n");
-    try std.fmt.format(writer, "stuff BOOTBOOT tells us: {any}\n", .{bootboot.bootboot});
+    klog.info("Total physical memory of {d} KiB", .{memory.KePhysicalMemorySize() / 1024});
 
-    try debugconp.writer().print("Total: {d}GiB\n", .{memory.KePhysicalMemorySize() / 1024 / 1024 / 1024});
-
-    try pageFrameAllocator.init();
+    pageFrameAllocator.init() catch |e| {
+        klog.err("Failed to initalize page bitmap: {s}", .{@errorName(e)});
+        return;
+    };
 
     const myPage = try pageFrameAllocator.requestPage();
 
-    try debugconp.writer().print("\nmy page: {d} ({x})\n", .{ myPage, myPage * 0x1000 });
+    klog.debug("my page: {d} ({x})", .{ myPage, myPage * 0x1000 });
 
-    try debugconp.writer().print("Allocated Page: {x}\n", .{(try pageFrameAllocator.requestPage()) * 0x1000});
+    klog.debug("Allocated Page: {x}", .{(try pageFrameAllocator.requestPage()) * 0x1000});
 
-    try debugconp.writer().print("Used Memory: {d}/{d} KiB\n", .{
+    klog.info("Used Memory: {d}/{d} KiB", .{
         pageFrameAllocator.getUsedMemory() / 1024,
         memory.KePhysicalMemorySize() / 1024,
     });
 
-    try debugconp.writer().print("Free Memory: {d}/{d} KiB\n", .{
+    klog.info("Free Memory: {d}/{d} KiB", .{
         pageFrameAllocator.getFreeMemory() / 1024,
         memory.KePhysicalMemorySize() / 1024,
     });
 
-    while (true) {
-        const c = io.inb(0xe9);
-
-        if (std.ascii.isAlphabetic(c))
-            io.outb(0xe9, c);
-    }
+    paging.init() catch |e| {
+        klog.err("Failed to initalize kernel paging: {s}", .{@errorName(e)});
+        return;
+    };
 }
 
 pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
@@ -66,6 +67,9 @@ pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
 
 // Entry point, called by BOOTBOOT Loader
 export fn _start() callconv(.c) noreturn {
+    if (bootboot.bootboot.numcores > 1)
+        klog.err("More than one CPU cores are currently not supported", .{});
+
     // NOTE: this code runs on all cores in parallel
 
     // const s = bootboot.fb_scanline;
@@ -73,13 +77,8 @@ export fn _start() callconv(.c) noreturn {
     // const h = bootboot.fb_height;
     // var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
 
-    io.outb(0xe9, '.');
-
     _ = kmain() catch |e| {
-        io.DirectPortIO.new(0xe9).writer().print("\n\nkmain() failed with error: {any}\n", .{e}) catch {
-            @panic("kmain() returned an error.");
-        };
-
+        klog.err("\n\nkmain() failed with error: {any}\n", .{e});
         while (true) {
             asm volatile ("hlt");
         }
