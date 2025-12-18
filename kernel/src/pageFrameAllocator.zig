@@ -29,6 +29,8 @@ pub fn init() !void {
 
     buffer = @as([*]u8, @ptrFromInt(bestBase))[0..needed];
 
+    klog.debug("Placing bitmap at 0x{x} with size {d}", .{ bestBase, needed });
+
     @memset(buffer, 0xFF);
 
     freePages = 0;
@@ -37,13 +39,15 @@ pub fn init() !void {
     for (bootboot.bootboot.mmap_entries()) |entry| {
         if (entry.getType() == .MMAP_FREE) {
             for (0..entry.getSizeIn4KiBPages()) |off| {
-                try setPageState((std.mem.alignForward(usize, entry.getPtr(), 0x1000) / 0x1000) + off, true);
+                try setPageState((std.mem.alignBackward(usize, entry.getPtr(), 0x1000) / 0x1000) + off, true);
             }
 
             usedPages -= entry.getSizeIn4KiBPages();
             freePages += entry.getSizeIn4KiBPages();
         }
     }
+
+    klog.debug("Reserving region...", .{});
 
     try reserveRegion((@intFromPtr(buffer.ptr) / 0x1000), (buffer.len / 0x1000) + 1);
 }
@@ -106,6 +110,10 @@ pub fn requestPage() !usize {
     freePages -= 1;
 
     return error.OutOfMemory;
+}
+
+pub fn pmmAllocatePage() !usize {
+    return (try requestPage()) * 0x1000;
 }
 
 pub fn reserveRegion(base: usize, pages: usize) !void {
