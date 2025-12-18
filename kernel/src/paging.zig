@@ -77,7 +77,12 @@ pub inline fn alignToPage(addr: [*]const u8) [*]align(0x1000) const u8 {
 
 const PageTable = [512]TableEntry;
 
-pub fn mmAllocatePageTableForMapping(page: [*]align(0x1000) const u8) !*TableEntry {
+const MappingEntry = struct {
+    entry: *TableEntry,
+    parentEntry: *TableEntry,
+};
+
+pub fn mmAllocatePageTableForMapping(page: [*]align(0x1000) const u8) !MappingEntry {
     std.debug.assertAligned(page, .fromByteUnits(0x1000));
 
     const index = PageAccessor.fromAddrAligned(page);
@@ -123,7 +128,10 @@ pub fn mmAllocatePageTableForMapping(page: [*]align(0x1000) const u8) !*TableEnt
         .pt = index.pd,
     })[index.pt];
 
-    return pe;
+    return .{
+        .entry = pe,
+        .parentEntry = pt,
+    };
 }
 
 pub inline fn todo(comptime tag: []const u8) noreturn {
@@ -167,31 +175,149 @@ pub fn mmWalkPageTableForMapping(page: [*]align(0x1000) const u8) !?*TableEntry 
     return pe;
 }
 
-pub fn mmGetPhysicalPage(addr: [*]align(0x1000) const u8) !usize {
-    const entry = try mmWalkPageTableForMapping(addr);
+pub fn mmGetPhysicalPage(virtual: [*]align(0x1000) const u8) !usize {
+    if (!std.mem.isAligned(@intFromPtr(virtual), 0x1000))
+        return error.MisalignedVirtualPage;
 
-    if (entry == null)
-        return error.NoSuchMapping;
+    const entry = (try mmWalkPageTableForMapping(virtual)) orelse return error.NotMapped;
 
-    return entry.?.getAddr();
+    if (!entry.present)
+        return error.NotMapped;
+
+    return entry.getAddr();
 }
 
-const MapOptions = packed struct {
+pub inline fn isAlignedTo(addr: usize, alignment: usize) bool {
+    return (addr % alignment) == 0;
+}
+
+const PageAttributes = packed struct {
     writable: bool = true,
-    noCache: bool = false,
-    writeThrough: bool = false,
+    no_cache: bool = false,
+    write_through: bool = false,
+    user: bool = false,
+    no_execute: bool = false,
 };
 
-pub fn mapPage(physical: usize, virtual: *anyopaque, attributes: MapOptions) !void {
-    _ = physical;
-    _ = virtual;
-    _ = attributes;
+pub inline fn mmFlushPage(virtual: *align(0x1000) const void) !void {
+    if (!std.mem.isAligned(@intFromPtr(virtual), 0x1000)) {
+        @branchHint(.unlikely); // mostly called interally after alignment was already checked.
+        return error.MisalignedVirtualPage;
+    }
+
+    asm volatile (
+        \\invlpg (%[page])
+        :
+        : [page] "r" (virtual),
+        : .{
+          .memory = true,
+        });
 }
 
-pub fn unmapPage(virtual: *anyopaque) !void {
-    _ = virtual;
+pub inline fn mmInternalGetCheckedEntry4k(virtual: *align(0x1000) const void) !*TableEntry {
+    if (!std.mem.isAligned(@intFromPtr(virtual), 0x1000))
+        return error.MisalignedVirtualPage;
 
-    @panic("todo");
+    const entry = (try mmWalkPageTableForMapping(virtual)) orelse return error.NotMapped;
+
+    if (!entry.present)
+        return error.NotMapped;
+
+    return entry;
+}
+
+pub fn mmGetPageAttributes(virtual: *align(0x1000) const void) !PageAttributes {
+    const entry = try mmInternalGetCheckedEntry4k(virtual);
+
+    return .{
+        .writable = entry.writable,
+        .no_cache = entry.disable_cache,
+        .write_through = entry.write_through,
+        .user = entry.user,
+        .no_execute = entry.no_execute,
+    };
+}
+
+pub fn mmSetPageAttributes(virtual: *align(0x1000) const void, attrs: PageAttributes) !void {
+    var entry = try mmInternalGetCheckedEntry4k(virtual);
+
+    entry.writable = attrs.writable;
+    entry.disable_cache = attrs.no_cache;
+    entry.write_through = attrs.write_through;
+    entry.user = attrs.user;
+    entry.no_execute = attrs.no_execute;
+
+    try mmFlushPage(virtual);
+}
+
+pub fn mmMapPage(physical: usize, virtual: *align(0x1000) const void, attributes: PageAttributes) !void {
+    if (!std.mem.isAligned(@intFromPtr(virtual), 0x1000))
+        return error.MisalignedVirtualPage;
+    if (!std.mem.isAligned(physical, 0x1000))
+        return error.MisalignedPhysicalPage;
+
+    const mapping = try mmAllocatePageTableForMapping(@ptrCast(virtual));
+    var entry = mapping.entry;
+
+    entry.setAddr(physical);
+    entry.present = true;
+    entry.writable = attributes.writable;
+    entry.disable_cache = attributes.no_cache;
+    entry.write_through = attributes.write_through;
+    entry.user = attributes.user;
+    entry.no_execute = attributes.no_execute;
+
+    // later: mapping.parentEntry.antos.parent_data.mapped += 1;
+
+    try mmFlushPage(virtual);
+}
+
+pub fn mmUnmapPage(virtual: *align(0x1000) const void) !void {
+    if (!std.mem.isAligned(@intFromPtr(virtual), 0x1000))
+        return error.MisalignedVirtualPage;
+
+    var entry = (try mmWalkPageTableForMapping(@ptrCast(virtual))) orelse return error.NotMapped;
+
+    if (!entry.present)
+        return error.NotMapped;
+
+    entry.setAddr(0x0000);
+    entry.present = false;
+    entry.writable = false; // perhaps not needed?
+
+    // NOTE: later add page table physical frame cleanup if needed.
+
+    try mmFlushPage(virtual);
+}
+
+pub fn mmMapPagedRegion(
+    physical_base: usize,
+    virtual_base: *align(0x1000) const void,
+    pages: usize,
+    attributes: PageAttributes,
+) !void {
+    // this is very simple, missing some optimizations(perhaps?) and other features, but will work for now.
+
+    for (0..pages) |page_off| {
+        try mmMapPage(
+            physical_base + (page_off * 0x1000),
+            virtual_base + (page_off * 0x1000),
+            attributes,
+        );
+    }
+}
+
+pub fn mmUnmapPagedRegion(
+    virtual_base: *align(0x1000) const void,
+    pages: usize,
+) !void {
+    // same as mmMapPagedRegion but unmapping instead of mapping.
+
+    for (0..pages) |page_off| {
+        try mmUnmapPage(
+            virtual_base + (page_off * 0x1000),
+        );
+    }
 }
 
 pub fn init() !void {
@@ -227,13 +353,9 @@ pub fn init() !void {
     klog.debug("Physical Address: {x}", .{@intFromPtr(example)});
     klog.debug("Physical Read: 0x{x}", .{example.*});
 
-    const mapping = try mmAllocatePageTableForMapping(exampleVirt);
-    klog.debug("Page Table Entry (Virtaddr): 0x{x}", .{@intFromPtr(mapping)});
-
-    mapping.huge = true;
-    mapping.present = true;
-    mapping.writable = true;
-    mapping.setAddr(@intFromPtr(example));
+    try mmMapPage(@intFromPtr(example), @ptrCast(exampleVirt), .{
+        .writable = true,
+    });
 
     klog.debug("Virt Read: 0x{x}", .{std.mem.bytesToValue(usize, exampleVirt)});
 
@@ -244,9 +366,13 @@ pub fn init() !void {
 
     klog.debug("Physical Read: 0x{x}", .{example.*});
 
-    klog.debug("==== END TESTS ====", .{});
+    klog.debug("mmGetPhysicalPage(example) = {any}", .{mmGetPhysicalPage(exampleVirt)});
 
-    klog.debug("mmGetPhysicalPage(example) = 0x{x}", .{try mmGetPhysicalPage(exampleVirt)});
+    try mmUnmapPage(@ptrCast(exampleVirt));
+    klog.debug("Unmapped page example virtual address.", .{});
+    klog.debug("mmGetPhysicalPage(example) = {any}", .{mmGetPhysicalPage(exampleVirt)});
+
+    klog.debug("==== END TESTS ====", .{});
 
     return todo("complete memory manager init");
 }
