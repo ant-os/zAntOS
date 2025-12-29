@@ -100,14 +100,13 @@ pub fn requestPage() !usize {
     while (base < totalPages()) {
         if (try isFree(base)) {
             try setPageState(base, false);
+            usedPages += 1;
+            freePages -= 1;
             return base;
         }
 
         base += 1;
     }
-
-    usedPages += 1;
-    freePages -= 1;
 
     return error.OutOfMemory;
 }

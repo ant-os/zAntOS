@@ -374,7 +374,7 @@ pub fn init() !void {
 
     klog.debug("==== END TESTS ====", .{});
 
-    return todo("complete memory manager init");
+    // return todo("complete memory manager init");
 }
 
 pub const TableEntry = packed struct {

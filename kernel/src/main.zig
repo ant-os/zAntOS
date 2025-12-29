@@ -5,8 +5,10 @@ const memory = @import("memory.zig");
 const pageFrameAllocator = @import("pageFrameAllocator.zig");
 const klog = std.log.scoped(.kernel);
 const paging = @import("paging.zig");
+const heap = @import("heap.zig");
 
 const fontEmbedded = @embedFile("font.psf");
+const QEMU_DEBUGCON = 0xe9;
 
 pub const std_options: std.Options = .{ .log_level = .debug, .logFn = kernelLog };
 pub fn kernelLog(
@@ -15,7 +17,11 @@ pub fn kernelLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    io.DirectPortIO.new(0xe9).writer().print(std.fmt.comptimePrint("[{s}] {s}: {s}\n", .{ @tagName(message_level), @tagName(scope), format }), args) catch {
+    io.DirectPortIO.new(0xe9).writer().print(std.fmt.comptimePrint("[{s}] {s}: {s}\n", .{
+        @tagName(message_level),
+        @tagName(scope),
+        format,
+    }), args) catch {
         io.DirectPortIO.writeString(0xe9, "[<log internal error>] format = ");
         io.DirectPortIO.writeString(0xe9, format);
         io.outb(0xe9, '\n');
@@ -52,6 +58,13 @@ pub noinline fn kmain() !void {
         klog.err("Failed to initalize kernel paging: {s}", .{@errorName(e)});
         return;
     };
+
+    heap.init(20) catch |e| {
+        klog.err("Failed to initalize kernel heap: {s}", .{@errorName(e)});
+        return;
+    };
+
+    klog.info("Reached end of kmain()", .{});
 }
 
 pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
