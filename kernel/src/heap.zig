@@ -3,11 +3,14 @@ const mm = @import("paging.zig");
 const pmm = @import("pageFrameAllocator.zig");
 const klog = std.log.scoped(.kernel_heap);
 
-const HEAP_BASE = 0xFFFF_FFE0_0000_0000;
-const HEAP_SIZE = 0xFFFF_FFFF_0000_0000 - HEAP_BASE;
-const HEAP_MINIMUM_SIZE = 0x10;
+const PAGE_SIZE = 0x1000;
 
-/// Heap segment header, located right before every allocation.
+const HEAP_BASE = 0xFFFF_FFE0_0000_0000;
+const HEAP_MAXIMUM_PAGES = ((0xFFFF_FFFF_0000_0000 - HEAP_BASE) / 0x1000) - 1;
+const HEAP_MINIMUM_SIZE = 0x10;
+const HEAP_MAX_DENSITY_PER_PAGE = (PAGE_SIZE / (HEAP_MINIMUM_SIZE + @sizeOf(SegmentHeader))) + 2; // 1 extra just to be sure.
+
+/// Heap segment header, located right before eveng:ry allocation.
 const SegmentHeader = struct {
     const Header = @This();
 
@@ -61,8 +64,7 @@ const SegmentHeader = struct {
     /// SAFETY: invalidates all pointers to the next segment that already exist.
     /// RETURN VALUE: Returns self, e.g. a pointer to the current segment.
     pub fn combineForward(self: *SegmentHeader) ?*SegmentHeader {
-        // if any of the two segment aren't free don't combine.
-        if (!self.free) return null;
+        // if any of the next segment isn't free don't combine.
         const next = self.next orelse return null;
         if (!next.free) return null;
 
@@ -97,29 +99,13 @@ const SegmentHeader = struct {
 };
 
 var lastSegment: ?*SegmentHeader = null;
+var totalPages: usize = 0;
 
 pub noinline fn init(preallocated_pages: usize) !void {
-    klog.info("Initalizing kernel heap with {d} preallocated pages.", .{preallocated_pages});
+    klog.info("Initalizing kernel heap with {d} preallocated page(s).", .{preallocated_pages});
     klog.debug("Segment Header is {d} bytes.", .{@sizeOf(SegmentHeader)});
 
-    for (0..preallocated_pages) |idx| {
-        try mm.mmMapPage(
-            try pmm.pmmAllocatePage(),
-            @ptrFromInt(HEAP_BASE + (idx * 0x1000)),
-            .{ .writable = true },
-        );
-    }
-
-    const startSeg = firstSegment();
-
-    startSeg.* = .{
-        .next = null,
-        .prev = null,
-        .size = (preallocated_pages * 0x1000) - @sizeOf(SegmentHeader),
-        .free = true,
-    };
-
-    lastSegment = startSeg;
+    try grow(preallocated_pages);
 
     klog.info("Done with heap init.", .{});
 
@@ -163,7 +149,18 @@ pub noinline fn init(preallocated_pages: usize) !void {
         );
     }
 
-    // add more tests or seperate them info REAL tests.
+    klog.debug("allocating 0x1234 bytes to cause heap to grow", .{});
+    var mem = try allocator.alloc(u8, 0x1234);
+    klog.debug("mem = [{d}]{any}", .{ mem.len, mem.ptr });
+    dumpSegments();
+
+    klog.debug("resize to 0x2000 bytes...", .{});
+    if (!allocator.resize(mem, 0x2000)) klog.err("failed to resize.", .{});
+    mem = mem[0..0x2000];
+    klog.debug("mem = [{d}]{any}", .{ mem.len, mem.ptr });
+    dumpSegments();
+
+    // add more tests or seperate them into REAL tests.
 
     klog.debug("Deallocating b and c...", .{});
     allocator.free(b);
@@ -172,10 +169,10 @@ pub noinline fn init(preallocated_pages: usize) !void {
     dumpSegments();
 }
 
-fn dumpSegments() void {
+pub fn dumpSegments() void {
     var currentSeg = firstSegment();
 
-    klog.debug("DUMPING KERNEL HEAP SEGMENTS:", .{});
+    klog.debug("DUMPING KERNEL HEAP SEGMENTS (size: {d} pages):", .{totalPages});
 
     while (true) {
         klog.debug("{X} {s} {d} bytes", .{
@@ -188,34 +185,39 @@ fn dumpSegments() void {
     }
 }
 
-fn allocate(_: *anyopaque, len: usize, alignment: std.mem.Alignment, return_addr: usize) ?[*]u8 {
-    // klog.debug("allocate called.", .{});
-
+pub fn allocate(unaligned_size: usize, alignment: std.mem.Alignment, return_addr: usize) ![*]u8 {
     _ = return_addr;
 
-    var size = alignment.forward(len);
+    var size = alignment.forward(unaligned_size);
     if (size < HEAP_MINIMUM_SIZE) size = HEAP_MINIMUM_SIZE;
 
     var currentSeg = firstSegment();
+    var found = false;
 
-    while (true) {
-        if (currentSeg.free) {
-            if (currentSeg.size > size) {
-                _ = currentSeg.split(size);
-                currentSeg.free = false;
-                return currentSeg.dataPointer(); // TODO: alignment?
-            }
-            if (currentSeg.size == size) {
-                currentSeg.free = false;
-                return currentSeg.dataPointer();
-            }
+    // NOTE: bounded loop to avoid possible infinite loops.
+    for (0..((totalPages * HEAP_MAX_DENSITY_PER_PAGE) + 10)) |_| {
+        if (currentSeg.free and currentSeg.size >= size) {
+            found = true;
+            break;
         }
-        if (currentSeg.next == null) break;
-
-        currentSeg = currentSeg.next.?;
+        currentSeg = currentSeg.next orelse break;
     }
 
-    return null;
+    if (!found) {
+        const pageCount = (size / 0x1000) + 1;
+        try grow(pageCount);
+
+        currentSeg = lastSegment orelse unreachable;
+    }
+
+    if (currentSeg.size > size) _ = currentSeg.split(size);
+    currentSeg.free = false;
+
+    return currentSeg.dataPointer(); // TODO: alignment?
+}
+
+fn vtable_alloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, return_addr: usize) ?[*]u8 {
+    return allocate(len, alignment, return_addr) catch null;
 }
 
 fn resize(
@@ -225,14 +227,29 @@ fn resize(
     new_len: usize,
     ret_addr: usize,
 ) bool {
-    klog.debug("resize() called", .{});
-    _ = memory;
-    _ = alignment;
-    _ = new_len;
     _ = ret_addr;
 
+    var size = alignment.forward(new_len);
+    if (size < HEAP_MINIMUM_SIZE) size = HEAP_MINIMUM_SIZE;
+
+    klog.debug("TRACE: resize([{d}]{any}, {d}) called", .{ memory.len, memory.ptr, size });
+
+    const seg = SegmentHeader.fromMemory(memory);
+
+    if (seg.size == size) return true;
+    if (size < seg.size) {
+        _ = seg.split(size);
+        return true;
+    }
+    if (size > seg.size and seg.next != null and seg.next.?.free and (seg.size + seg.next.?.size + @sizeOf(SegmentHeader)) >= size) {
+        _ = seg.combineForward();
+        if (seg.size < size) return false; // just to be sure.
+        _ = seg.split(size);
+        return true;
+    }
     return false;
 }
+
 fn remap(
     _: *anyopaque,
     memory: []u8,
@@ -248,6 +265,35 @@ fn remap(
     _ = ret_addr;
 
     return null;
+}
+
+fn grow(pages: usize) !void {
+    if (totalPages + pages >= HEAP_MAXIMUM_PAGES) return error.OutOfMemory;
+
+    for (totalPages..(totalPages + pages)) |idx| {
+        try mm.mmMapPage(
+            try pmm.pmmAllocatePage(),
+            @ptrFromInt(HEAP_BASE + (idx * 0x1000)),
+            .{ .writable = true },
+        );
+    }
+
+    if (lastSegment != null and lastSegment.?.free) {
+        lastSegment.?.size += pages * 0x1000;
+    } else { // create a new last segment
+        const newSeg: *SegmentHeader = @ptrFromInt(HEAP_BASE + (totalPages * 0x1000));
+
+        newSeg.* = .{
+            .next = null,
+            .prev = lastSegment,
+            .size = (pages * 0x1000) - @sizeOf(SegmentHeader),
+            .free = true,
+        };
+
+        lastSegment = newSeg;
+    }
+
+    totalPages += pages;
 }
 
 fn free(
@@ -273,7 +319,7 @@ fn free(
 }
 
 pub const allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &std.mem.Allocator.VTable{
-    .alloc = allocate,
+    .alloc = vtable_alloc,
     .resize = resize,
     .remap = remap,
     .free = free,

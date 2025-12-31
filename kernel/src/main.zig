@@ -6,6 +6,8 @@ const pageFrameAllocator = @import("pageFrameAllocator.zig");
 const klog = std.log.scoped(.kernel);
 const paging = @import("paging.zig");
 const heap = @import("heap.zig");
+const antstatus = @import("status.zig");
+const ANTSTATUS = antstatus.Status;
 
 const fontEmbedded = @embedFile("font.psf");
 const QEMU_DEBUGCON = 0xe9;
@@ -25,6 +27,7 @@ pub fn kernelLog(
         io.DirectPortIO.writeString(0xe9, "[<log internal error>] format = ");
         io.DirectPortIO.writeString(0xe9, format);
         io.outb(0xe9, '\n');
+        // std.io.Writer.print(w: *Writer, comptime fmt: []const u8, args: anytype)
     };
 }
 
@@ -59,10 +62,47 @@ pub noinline fn kmain() !void {
         return;
     };
 
-    heap.init(20) catch |e| {
+    heap.init(1) catch |e| {
         klog.err("Failed to initalize kernel heap: {s}", .{@errorName(e)});
         return;
     };
+
+    klog.info("Parsing initrd...", .{});
+
+    const initrd: [*]align(1) u8 = @ptrFromInt(bootboot.bootboot.initrd_ptr);
+    var initrd_reader = std.io.Reader.fixed(initrd[0..bootboot.bootboot.initrd_size]);
+    var tar_iter = std.tar.Iterator.init(&initrd_reader, .{
+        .file_name_buffer = try heap.allocator.alloc(u8, 255),
+        .link_name_buffer = try heap.allocator.alloc(u8, 255),
+    });
+
+    var file: std.tar.Iterator.File = undefined;
+    for (0..2) |_| {
+        file = (try tar_iter.next()) orelse break;
+        if (std.ascii.endsWithIgnoreCase(file.name, ".text")) {
+            klog.info("file {s} ({d} bytes): {s}", .{
+                file.name,
+                file.size,
+                try initrd_reader.readAlloc(heap.allocator, file.size),
+            });
+        } else {
+            klog.info("file {s} ({d} bytes): <not a text file>", .{
+                file.name,
+                file.size,
+            });
+        }
+
+        if (initrd_reader.seek == bootboot.bootboot.initrd_size - 1) break;
+    }
+
+    heap.dumpSegments();
+
+    var status = ANTSTATUS.err(.invalid_alignement);
+
+    klog.debug("status: {f}", .{status});
+    klog.debug("zig error: {any}", .{status.intoZigError()});
+    klog.debug("c-style error code: 0x{x}.", .{status.asU64()});
+    klog.debug("casted from int of 0x70..3: {f}", .{ANTSTATUS.fromU64(0x7000000000000003)});
 
     klog.info("Reached end of kmain()", .{});
 }

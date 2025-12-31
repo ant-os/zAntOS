@@ -83,8 +83,6 @@ const MappingEntry = struct {
 };
 
 pub fn mmAllocatePageTableForMapping(page: [*]align(0x1000) const u8) !MappingEntry {
-    std.debug.assertAligned(page, .fromByteUnits(0x1000));
-
     const index = PageAccessor.fromAddrAligned(page);
 
     var pdp = &PageAccessor.asPointer(PageTable, .{})[index.pml4];
@@ -139,8 +137,6 @@ pub inline fn todo(comptime tag: []const u8) noreturn {
 }
 
 pub fn mmWalkPageTableForMapping(page: [*]align(0x1000) const u8) !?*TableEntry {
-    std.debug.assertAligned(page, .fromByteUnits(0x1000));
-
     const index = PageAccessor.fromAddrAligned(page);
 
     const pdp = &PageAccessor.asPointer(PageTable, .{})[index.pml4];

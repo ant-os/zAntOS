@@ -10,7 +10,7 @@ OUT_DIR := output/$(ARCH)
 INITRD_DIR = $(BUILD_DIR)/initrd
 DEVTOOLS_DIR := devtools
 3RDP_DIR := third-party
-
+HOST_OS := Linux
 dump-config: 
 	@echo Operating System: $(OSNAME)
 	@echo Architecture: $(ARCH)
