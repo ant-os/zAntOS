@@ -8,6 +8,10 @@ const paging = @import("paging.zig");
 const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
 const ANTSTATUS = antstatus.Status;
+const filesystem = @import("filesystem.zig");
+const driverManager = @import("driverManager.zig");
+const driverCallbacks = @import("driverCallbacks.zig");
+const builtindrv_initrdfs = @import("initrdfs.zig");
 
 const fontEmbedded = @embedFile("font.psf");
 const QEMU_DEBUGCON = 0xe9;
@@ -97,14 +101,63 @@ pub noinline fn kmain() !void {
 
     heap.dumpSegments();
 
-    var status = ANTSTATUS.err(.invalid_alignement);
+    var status = ANTSTATUS.err(.invalid_parameter);
 
     klog.debug("status: {f}", .{status});
     klog.debug("zig error: {any}", .{status.intoZigError()});
     klog.debug("c-style error code: 0x{x}.", .{status.asU64()});
     klog.debug("casted from int of 0x70..3: {f}", .{ANTSTATUS.fromU64(0x7000000000000003)});
 
+    const parameters = ([2]driverManager.ParameterDesc){
+        .new("base", bootboot.bootboot.initrd_ptr),
+        .new("size", bootboot.bootboot.initrd_size),
+    };
+    var test_drv = try driverManager.register(
+        "test",
+        .generic,
+        mydrv_init,
+        @ptrCast(&parameters),
+        parameters.len,
+    );
+
+    klog.debug("descriptor returned by addBuiltin: {any}", .{test_drv});
+
+    try test_drv.setCallback(driverCallbacks.DELETE, mydrv_init);
+    try test_drv.init();
+
+    const delete_cb = test_drv.callback(driverCallbacks.DELETE);
+    try delete_cb.?(test_drv.object).intoZigError();
+
+    const initrdfs_drv = try builtindrv_initrdfs.install();
+    const mynote = try filesystem.open(initrdfs_drv, "note.text");
+    const fileinfo = try filesystem.getfileinfo(initrdfs_drv, mynote);
+    defer heap.allocator.destroy(fileinfo); // new as it no longer returns-by-value.
+
+    klog.debug("{any}", .{fileinfo});
+
+    const buf = try heap.allocator.alloc(u8, fileinfo.size);
+    defer heap.allocator.free(buf);
+
+    try filesystem.read(initrdfs_drv, mynote, buf);
+
+    klog.debug("my note: {s}", .{buf});
+
+    try filesystem.close(initrdfs_drv, mynote);
+
+    //_ = initrdfs_drv;
+    heap.dumpSegments();
+
     klog.info("Reached end of kmain()", .{});
+}
+
+fn mydrv_init(o: *driverManager.DriverObject) callconv(.c) ANTSTATUS {
+    klog.debug("driver: name = {s}", .{o.name});
+
+    var first_param = o.paramter_values.?[0];
+
+    klog.info("first param = {s}", .{first_param.getName()});
+
+    return .SUCCESS;
 }
 
 pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
@@ -170,7 +223,6 @@ export fn _start() callconv(.c) noreturn {
     //             framebuffer[(s * (y + 20) + (x + 80) * 4) / @sizeOf(u32)] = 0x000000FF;
     //         }
     //     }
-
     //     // say hello
     //     puts("Welcome to zAntOS, the zig rewrite of AntOS (e.g. AntOS v3).");
     // }*/

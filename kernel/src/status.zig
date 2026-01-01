@@ -5,7 +5,7 @@ pub const Status = packed struct {
     reserved: u16 = 0,
     kind: Kind,
 
-    const SUCCESS: Status = .fromU64(0x0);
+    pub const SUCCESS: Status = .fromU64(0x0);
 
     pub inline fn err(code: ErrorCode) @This() {
         return .{
@@ -29,9 +29,14 @@ pub const Status = packed struct {
     pub const ErrorCode = enum(u32) {
         general_error,
         ummappable_region,
+        not_mapped,
+        bitmap_corrupted,
+        out_of_memory,
         permission_denied,
         not_found,
-        invalid_alignement,
+        invalid_alignment,
+        invalid_parameter,
+        unsupported_operation,
         _,
     };
 
@@ -47,7 +52,12 @@ pub const Status = packed struct {
             .general_error => return error.GeneralError,
             .ummappable_region => return error.UnmappableRegion,
             .permission_denied => return error.PermissionDenied,
-            .invalid_alignement => return error.InvalidAlignment,
+            .invalid_alignment => return error.InvalidAlignment,
+            .invalid_parameter => return error.InvalidParameter,
+            .not_mapped => return error.NotMapped,
+            .bitmap_corrupted => return error.BitmapCorrupted,
+            .unsupported_operation => return error.UnsupportedOperation,
+            .out_of_memory => return error.OutOfMemory,
             .not_found => return error.NotFound,
             _ => return error.UnknownError,
         }

@@ -96,6 +96,19 @@ const SegmentHeader = struct {
 
         return prev;
     }
+
+    /// SAFETY: undefined state after return
+    pub fn alignTo(self: *SegmentHeader, alignment: std.mem.Alignment) usize {
+        const padding = std.mem.alignPointerOffset(std.mem.asBytes(self).ptr, alignment.toByteUnits());
+        var aligned_seg: *SegmentHeader = undefined;
+
+        const prev = self.prev;
+
+        if (prev != null) prev.?.size += padding;
+        aligned_seg = @ptrFromInt(alignment.forward(@intFromPtr(self)));
+
+        return aligned_seg;
+    }
 };
 
 var lastSegment: ?*SegmentHeader = null;
@@ -213,7 +226,8 @@ pub fn allocate(unaligned_size: usize, alignment: std.mem.Alignment, return_addr
     if (currentSeg.size > size) _ = currentSeg.split(size);
     currentSeg.free = false;
 
-    return currentSeg.dataPointer(); // TODO: alignment?
+    //  return currentSeg.dataPointer(); // TODO: alignment? << "?" really!?!
+    return @ptrFromInt(alignment.forward(@intFromPtr(currentSeg.dataPointer())));
 }
 
 fn vtable_alloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, return_addr: usize) ?[*]u8 {
