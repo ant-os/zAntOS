@@ -36,6 +36,8 @@ pub fn kernelLog(
 }
 
 pub noinline fn kmain() !void {
+    defer heap.dumpSegments();
+
     klog.info("Starting zAntOS...", .{});
 
     klog.info("Total physical memory of {d} KiB", .{memory.KePhysicalMemorySize() / 1024});
@@ -108,26 +110,6 @@ pub noinline fn kmain() !void {
     klog.debug("c-style error code: 0x{x}.", .{status.asU64()});
     klog.debug("casted from int of 0x70..3: {f}", .{ANTSTATUS.fromU64(0x7000000000000003)});
 
-    const parameters = ([2]driverManager.ParameterDesc){
-        .new("base", bootboot.bootboot.initrd_ptr),
-        .new("size", bootboot.bootboot.initrd_size),
-    };
-    var test_drv = try driverManager.register(
-        "test",
-        .generic,
-        mydrv_init,
-        @ptrCast(&parameters),
-        parameters.len,
-    );
-
-    klog.debug("descriptor returned by addBuiltin: {any}", .{test_drv});
-
-    try test_drv.setCallback(driverCallbacks.DELETE, mydrv_init);
-    try test_drv.init();
-
-    const delete_cb = test_drv.callback(driverCallbacks.DELETE);
-    try delete_cb.?(test_drv.object).intoZigError();
-
     const initrdfs_drv = try builtindrv_initrdfs.install();
     const mynote = try filesystem.open(initrdfs_drv, "note.text");
     const fileinfo = try filesystem.getfileinfo(initrdfs_drv, mynote);
@@ -143,9 +125,6 @@ pub noinline fn kmain() !void {
     klog.debug("my note: {s}", .{buf});
 
     try filesystem.close(initrdfs_drv, mynote);
-
-    //_ = initrdfs_drv;
-    heap.dumpSegments();
 
     klog.info("Reached end of kmain()", .{});
 }

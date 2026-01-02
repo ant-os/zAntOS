@@ -51,27 +51,29 @@ fn init(object: *DriverObject) callconv(.c) ANTSTATUS {
     return .SUCCESS;
 }
 
-noinline fn open(
+fn open(
     _: *const DriverObject,
     filename: [*]const u8,
     filename_len: usize,
     out_desc: **anyopaque,
 ) callconv(.c) ANTSTATUS {
-    @setRuntimeSafety(true);
-
     klog.debug("open(\"{s}\") called.", .{filename[0..filename_len]});
 
-    var desc = heap.allocator.create(FileDescriptor) catch {
-        return ANTSTATUS.err(.out_of_memory);
-    };
+    var desc = heap.allocator.create(FileDescriptor) catch return .err(.out_of_memory);
 
     const initrd: [*]u8 = @ptrFromInt(bootboot.bootboot.initrd_ptr);
     var initrd_reader = std.io.Reader.fixed(initrd[0..bootboot.bootboot.initrd_size]);
 
+    const filename_buf = heap.allocator.alloc(u8, filesystem.max_filename_len) catch return .err(.out_of_memory);
+    defer heap.allocator.free(filename_buf);
+
+    const linkname_buf = heap.allocator.alloc(u8, filesystem.max_filename_len) catch return .err(.out_of_memory);
+    defer heap.allocator.free(linkname_buf);
+
     if (mode == .tar) {
         var tar_iter = std.tar.Iterator.init(&initrd_reader, .{
-            .file_name_buffer = heap.allocator.alloc(u8, 255) catch unreachable,
-            .link_name_buffer = heap.allocator.alloc(u8, 16) catch unreachable,
+            .file_name_buffer = filename_buf,
+            .link_name_buffer = linkname_buf,
         });
 
         var current: std.tar.Iterator.File = undefined;
@@ -107,7 +109,7 @@ noinline fn open(
                 var raw_name = &desc.metadata.name;
                 std.mem.copyForwards(u8, raw_name[0..current.name.len], current.name);
 
-                desc.data = initrd[initrd_reader.seek..]; // no need to store a slice as the metadata already contains the size.
+                desc.data = initrd[initrd_reader.seek..];
                 found = true;
                 break;
             }
@@ -157,14 +159,19 @@ fn get_fileinfo(
     return .SUCCESS;
 }
 
-fn read(_: *const DriverObject, desc: *anyopaque, buffer: [*]u8, buffer_size: usize) callconv(.c) ANTSTATUS {
+fn read(
+    _: *const DriverObject,
+    desc: *anyopaque,
+    buffer: [*]u8,
+    buffer_size: usize,
+) callconv(.c) ANTSTATUS {
     const typed: *FileDescriptor = @ptrCast(@alignCast(desc));
 
     if (typed.metadata.offset + buffer_size > typed.metadata.size)
         return ANTSTATUS.err(.invalid_parameter);
 
     const data = typed.data[typed.metadata.offset..(typed.metadata.offset + buffer_size)];
-    std.mem.copyForwards(u8, buffer[0..buffer_size], data);
+    @memcpy(buffer[0..buffer_size], data);
 
     typed.metadata.offset += buffer_size;
 

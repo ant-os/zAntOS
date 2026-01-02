@@ -4,7 +4,7 @@ const driverManager = @import("driverManager.zig");
 const driverCallbacks = @import("driverCallbacks.zig");
 const heap = @import("heap.zig");
 
-const max_filename_len = 255;
+pub const max_filename_len = 255;
 
 pub const FileInfo = extern struct {
     name: [max_filename_len]u8,

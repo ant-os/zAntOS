@@ -18,7 +18,7 @@ A Task can also be skipped with `s` or active denoted by `-`.
 - [s] Use modified standard library.
 - [s] Expand and improve the build system.
 - [s] Architecture Abstration (Maybe Later).
-- [ ] Initrd Parsing
+- [x] Initrd Parsing
 - [ ] Documenation (ensure.)
 - [ ] Serial I/0 Abstraction.
 - [ ] Simple shell via COM1.

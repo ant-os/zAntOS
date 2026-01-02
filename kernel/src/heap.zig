@@ -18,6 +18,7 @@ const SegmentHeader = struct {
     prev: ?*SegmentHeader,
     free: bool,
     size: usize,
+    padding: u32 = 0,
 
     /// get a pointer to the current segment.
     pub inline fn dataPointer(self: *Header) [*]u8 {
@@ -95,19 +96,6 @@ const SegmentHeader = struct {
         if (self == lastSegment) lastSegment = prev;
 
         return prev;
-    }
-
-    /// SAFETY: undefined state after return
-    pub fn alignTo(self: *SegmentHeader, alignment: std.mem.Alignment) usize {
-        const padding = std.mem.alignPointerOffset(std.mem.asBytes(self).ptr, alignment.toByteUnits());
-        var aligned_seg: *SegmentHeader = undefined;
-
-        const prev = self.prev;
-
-        if (prev != null) prev.?.size += padding;
-        aligned_seg = @ptrFromInt(alignment.forward(@intFromPtr(self)));
-
-        return aligned_seg;
     }
 };
 
@@ -199,6 +187,7 @@ pub fn dumpSegments() void {
 }
 
 pub fn allocate(unaligned_size: usize, alignment: std.mem.Alignment, return_addr: usize) ![*]u8 {
+    klog.debug("allocate({d}, align: {any}) called.", .{ unaligned_size, alignment });
     _ = return_addr;
 
     var size = alignment.forward(unaligned_size);
@@ -223,11 +212,28 @@ pub fn allocate(unaligned_size: usize, alignment: std.mem.Alignment, return_addr
         currentSeg = lastSegment orelse unreachable;
     }
 
-    if (currentSeg.size > size) _ = currentSeg.split(size);
-    currentSeg.free = false;
+    const padding = alignment.forward(@intFromPtr(currentSeg)) - @intFromPtr(currentSeg);
+    var prev = currentSeg.prev;
+    var next = currentSeg.next;
 
-    //  return currentSeg.dataPointer(); // TODO: alignment? << "?" really!?!
-    return @ptrFromInt(alignment.forward(@intFromPtr(currentSeg.dataPointer())));
+    var newSegment: *SegmentHeader = @ptrFromInt(@intFromPtr(currentSeg) + padding);
+
+    if (padding > std.math.maxInt(u16)) return error.InvalidAlignment;
+    if (padding > 16) klog.warn("Larger than 16-byte padding leaked ({d} bytes).", .{padding});
+    newSegment.* = .{
+        .size = size,
+        .free = false,
+        .prev = prev,
+        .next = next,
+        .padding = @intCast(padding),
+    };
+    if (prev != null) prev.?.next = newSegment;
+    if (next != null) next.?.prev = newSegment;
+
+    if (newSegment.size > size) _ = newSegment.split(size);
+
+    //  return currentSeg.dataPointer(); // alignment!?!
+    return newSegment.dataPointer();
 }
 
 fn vtable_alloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, return_addr: usize) ?[*]u8 {
