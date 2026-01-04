@@ -4,7 +4,7 @@ const heap = @import("heap.zig");
 const filesystem = @import("filesystem.zig");
 const callbacks = @import("driverCallbacks.zig");
 pub const DriverObject = extern struct {
-    name: [255]u8,
+    display_name: [255]u8,
     paramter_count: u64,
     paramter_values: ?[*]const ParameterDesc,
     callbacks: [callbacks.MAXIMUM_INDEX + 1]usize,
@@ -38,23 +38,27 @@ pub const ParameterDesc = extern struct {
 
 pub const DriverType = enum {
     generic,
+    char,
+    block,
     filesystem,
 };
 
 pub const DriverInitFunc = fn (*DriverObject) callconv(.c) ANTSTATUS;
 
-pub const DriverDesciptor = struct {
+pub const DriverDescriptor = struct {
     node: std.DoublyLinkedList.Node,
+    resources: std.DoublyLinkedList,
+    resource_count: u64,
     object: *DriverObject,
     init_func: *const DriverInitFunc,
     type_: DriverType,
 
-    pub fn init(self: *const DriverDesciptor) !void {
+    pub fn init(self: *const DriverDescriptor) !void {
         try self.init_func(self.object).intoZigError();
     }
 
     pub fn setCallback(
-        self: *const DriverDesciptor,
+        self: *const DriverDescriptor,
         comptime cb: callbacks.Callback,
         func: *const cb.signature,
     ) !void {
@@ -65,7 +69,7 @@ pub const DriverDesciptor = struct {
     }
 
     pub inline fn callback(
-        self: *const DriverDesciptor,
+        self: *const DriverDescriptor,
         comptime cb: callbacks.Callback,
     ) ?*const cb.signature {
         if (cb.driver_ty != .generic and cb.driver_ty != self.type_) return null;
@@ -102,15 +106,15 @@ pub fn register(
     init_fn: *const DriverInitFunc,
     paramters: ?[*]const ParameterDesc,
     param_count: usize,
-) !*const DriverDesciptor {
-    var desc = try heap.allocator.create(DriverDesciptor);
+) !*const DriverDescriptor {
+    var desc = try heap.allocator.create(DriverDescriptor);
 
-    desc.* = std.mem.zeroInit(DriverDesciptor, desc.*);
+    desc.* = std.mem.zeroInit(DriverDescriptor, desc.*);
 
     desc.object = try heap.allocator.create(DriverObject);
     desc.object.* = std.mem.zeroInit(DriverObject, desc.object.*);
     desc.type_ = type_;
-    std.mem.copyForwards(u8, &desc.object.name, name);
+    std.mem.copyForwards(u8, &desc.object.display_name, name);
     if (paramters != null and param_count != 0) {
         desc.object.paramter_count = @intCast(param_count);
         desc.object.paramter_values = paramters;

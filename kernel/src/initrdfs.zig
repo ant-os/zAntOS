@@ -5,9 +5,11 @@ const klog = std.log.scoped(.initrdfs_driver);
 const driverManager = @import("driverManager.zig");
 const callbacks = @import("driverCallbacks.zig");
 const filesystem = @import("filesystem.zig");
-const ANTSTATUS = @import("status.zig").Status;
+const ANTSTATUS = @import("types.zig").ANTSTATUS;
+const HANDLE = @import("types.zig").HANDLE;
 const heap = @import("heap.zig");
 const bootboot = @import("bootboot.zig");
+const resource = @import("resource.zig");
 
 const DriverObject = driverManager.DriverObject;
 
@@ -22,7 +24,7 @@ const FileDescriptor = struct {
     data: [*]u8,
 };
 
-pub fn install() !*const driverManager.DriverDesciptor {
+pub fn install() !HANDLE {
     var desc = try driverManager.register(
         "initrdfs",
         .filesystem,
@@ -33,7 +35,7 @@ pub fn install() !*const driverManager.DriverDesciptor {
 
     try desc.init();
 
-    return desc;
+    return try resource.create(null, .driver, @ptrCast(desc));
 }
 
 fn init(object: *DriverObject) callconv(.c) ANTSTATUS {
@@ -51,8 +53,37 @@ fn init(object: *DriverObject) callconv(.c) ANTSTATUS {
     return .SUCCESS;
 }
 
+fn mount(
+    _: *const DriverObject,
+    backing_dev: HANDLE,
+    param_keys: [*]u8,
+    param_values: [*]u64,
+    out_handle: **anyopaque,
+) callconv(.c) ANTSTATUS {
+    _ = param_keys;
+    _ = param_values;
+
+    // TODO: Validation
+
+    out_handle.* = @ptrCast(backing_dev);
+}
+
+pub fn keReadBuffer(handle: HANDLE, buf: []u8) !void {
+    switch (handle.type) {
+        .file => filesystem.read(handle.owner, handle.internal, buf),
+        .device => switch (handle.type.device) {
+            .chardev => @panic("todo: read from chardev"),
+            .block => @panic("todo: read from block dev"),
+            else => return error.UnsupportedOperation,
+        },
+        .invalid => return error.InvalidHandle,
+        else => return error.UnsupportedOperation,
+    }
+}
+
 fn open(
     _: *const DriverObject,
+    fs_handle: *anyopaque,
     filename: [*]const u8,
     filename_len: usize,
     out_desc: **anyopaque,

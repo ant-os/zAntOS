@@ -3,8 +3,10 @@
 const std = @import("std");
 const driverManager = @import("driverManager.zig");
 const filesystem = @import("filesystem.zig");
+const blockdev = @import("blockdev.zig");
 
 const DriverObject = driverManager.DriverObject;
+const HANDLE = @import("types.zig").HANDLE;
 const ANTSTATUS = @import("status.zig").Status;
 
 /// Maximum index for a driver callback, the driver object contains a fixes size array of the size of this value plus one.
@@ -35,11 +37,28 @@ pub const DELETE: Callback = .{
     .signature = fn (*DriverObject) callconv(.c) ANTSTATUS,
 };
 
-/// called to open the file with given name.
+pub const FS_MOUNT: Callback = .{
+    .driver_ty = .filesystem,
+    .idx = index(6),
+    .signature = fn (
+        driver_object: *const DriverObject,
+        backing_dev: HANDLE,
+        param_keys: [*]u8,
+        param_values: [*]u64,
+        out_handler: **anyopaque,
+    ) callconv(.c) ANTSTATUS,
+};
+
+pub const FS_UNMOUNT: Callback = .{
+    .driver_ty = .filesystem,
+    .idx = index(7),
+    .signature = fn (*const DriverObject, *anyopaque) callconv(.c) ANTSTATUS,
+};
+
 pub const FS_OPEN: Callback = .{
     .driver_ty = .filesystem,
     .idx = index(8),
-    .signature = fn (*const DriverObject, [*]const u8, usize, **anyopaque) callconv(.c) ANTSTATUS,
+    .signature = fn (*const DriverObject, *anyopaque, [*]const u8, usize, **anyopaque) callconv(.c) ANTSTATUS,
 };
 
 pub const FS_CLOSE: Callback = .{
@@ -64,4 +83,34 @@ pub const FS_READ: Callback = .{
     .driver_ty = .filesystem,
     .idx = index(12),
     .signature = fn (*const DriverObject, *anyopaque, [*]u8, usize) callconv(.c) ANTSTATUS,
+};
+
+pub const BLOCK_ATTACH: Callback = .{
+    .driver_ty = .block,
+    .idx = index(6),
+    .signature = fn (*const DriverObject, [*]u8, [*]u64, **anyopaque) callconv(.c) ANTSTATUS,
+};
+
+pub const BLOCK_DETACH: Callback = .{
+    .driver_ty = .block,
+    .idx = index(7),
+    .signature = fn (*const DriverObject, *anyopaque) callconv(.c) ANTSTATUS,
+};
+
+pub const BLOCK_GET_INFO: Callback = .{
+    .driver_ty = .block,
+    .idx = index(8),
+    .signature = fn (*const DriverObject, *anyopaque, *blockdev.InfoBlock) callconv(.c) ANTSTATUS,
+};
+
+pub const BLOCK_READ: Callback = .{
+    .driver_ty = .block,
+    .idx = index(9),
+    .signature = fn (*const DriverObject, *anyopaque, sector: u64, num_sectors: usize, [*]u8) callconv(.c) ANTSTATUS,
+};
+
+pub const BLOCK_WRITE: Callback = .{
+    .driver_ty = .block,
+    .idx = index(10),
+    .signature = fn (*const DriverObject, *anyopaque, sector: u64, num_sectors: usize, [*]u8) callconv(.c) ANTSTATUS,
 };
