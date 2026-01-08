@@ -1,5 +1,5 @@
 const std = @import("std");
-const ANTSTATUS = @import("status.zig").Status;
+const ANTSTATUS = @import("status.zig").ANTSTATUS;
 const HANDLE = @import("types.zig").HANDLE;
 const driverManager = @import("driverManager.zig");
 const driverCallbacks = @import("driverCallbacks.zig");
@@ -38,29 +38,29 @@ pub fn mount(h_driver: HANDLE, backing_dev: HANDLE, param_keys: [*]u8, param_val
 }
 
 pub fn open(fs_handle: HANDLE, name: []const u8) !HANDLE {
-    if (fs_handle.type != .device or fs_handle.type.device != .filesystem) return error.InvalidHandle;
+    if (fs_handle.type != .device or fs_handle.type.device != .filesystem or fs_handle.internal == null) return error.InvalidHandle;
 
-    const open_cb = fs_handle.owner.callback(driverCallbacks.FS_OPEN);
+    const open_cb = fs_handle.owner.?.callback(driverCallbacks.FS_OPEN);
 
     if (open_cb == null) return error.UnsupportedOperation;
 
     var desc: *anyopaque = undefined;
-    try open_cb.?(fs_handle.owner.object, fs_handle.internal, name.ptr, name.len, &desc).intoZigError();
+    try open_cb.?(fs_handle.owner.?.object, fs_handle.internal.?, name.ptr, name.len, &desc).intoZigError();
 
     return try resource.create(fs_handle.owner, .file, desc);
 }
 
 pub fn closeNoDestroy(h_file: HANDLE) !void {
-    if (h_file.type != .device or h_file.type.device != .filesystem) return error.InvalidHandle;
+    if (h_file.type != .device or h_file.type.device != .filesystem or h_file.internal == null) return error.InvalidHandle;
 
-    const close_cb = h_file.owner.callback(driverCallbacks.FS_CLOSE);
+    const close_cb = h_file.owner.?.callback(driverCallbacks.FS_CLOSE);
 
     if (close_cb == null) return error.UnsupportedOperation;
 
-    try close_cb.?(h_file.owner.object, h_file.internal).intoZigError();
+    try close_cb.?(h_file.owner.?.object, h_file.internal.?).intoZigError();
 }
 
-pub fn getfileinfo(driver: *const driverManager.DriverDesciptor, desc: *anyopaque) !*const FileInfo {
+pub fn getfileinfo(driver: *const driverManager.DriverDescriptor, desc: *anyopaque) !*const FileInfo {
     if (driver.type_ != .filesystem) return error.MismatchedDriverType;
 
     const getfileinfo_cb = driver.callback(driverCallbacks.FS_GET_FILE_INFO);

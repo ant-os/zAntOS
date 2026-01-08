@@ -30,9 +30,9 @@ pub const ResourceType = union(enum) {
 };
 
 pub const ResourceDescriptor = struct {
-    owner: ?*const DriverDescriptor,
+    owner: ?*DriverDescriptor,
     node: std.DoublyLinkedList.Node,
-    internal: *anyopaque,
+    internal: ?*anyopaque,
     type: ResourceType,
 
     pub inline fn isGlobal(self: *const ResourceDescriptor) bool {
@@ -40,7 +40,7 @@ pub const ResourceDescriptor = struct {
     }
 
     pub inline fn asDriver(self: *const ResourceDescriptor) ?*DriverDescriptor {
-        if (self.type != .driver) return null;
+        if (self.type != .driver and self.internal != null) return null;
         return @ptrCast(@alignCast(self.internal));
     }
 };
@@ -49,24 +49,24 @@ var global_resources: std.DoublyLinkedList = .{};
 var global_resource_count: usize = 0;
 
 pub fn create(
-    owner: ?*const DriverDescriptor,
+    owner: ?*DriverDescriptor,
     ty: ResourceType,
     handle: *anyopaque,
 ) !*const ResourceDescriptor {
     if (owner == null and ty == .file) return error.InvalidParameter;
 
-    const resources = if (owner != null) &owner.?.resources else &global_resources;
+    var resources = if (owner != null) &owner.?.resources else &global_resources;
 
     const desc: *ResourceDescriptor = try heap.allocator.create(ResourceDescriptor);
 
     desc.* = .{
         .owner = owner,
-        .handle = handle,
+        .internal = handle,
         .type = ty,
         .node = .{},
     };
 
-    resources.append(desc);
+    resources.append(&desc.node);
 
     if (owner != null) owner.?.resource_count += 1 else global_resource_count += 1;
 

@@ -35,9 +35,12 @@ pub const FramebufferFormat = enum(u8) {
     BGRA = 3,
 };
 
+/// DEPRICATED
 pub extern var bootboot: BOOTBOOT; // see bootboot.zig
 pub extern var environment: [4096]u8; // configuration, UTF-8 text key=value pairs
 pub extern var fb: u8; // linear framebuffer mapped
+
+pub const info = @extern(*BOOTBOOT, .{ .name = "bootboot" });
 
 // mmap entry, type is stored in least significant tetrad (half byte) of size
 // this means size described in 16 byte units (not a problem, most modern

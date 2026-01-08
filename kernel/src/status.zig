@@ -1,11 +1,20 @@
+//! AntOS C-Safe Status Code.
+// NOTE: Not a source file struct as it needs to be packed.
+
 const std = @import("std");
 
-pub const Status = packed struct {
+comptime {
+    if (@sizeOf(ANTSTATUS) != @sizeOf(u64) or @alignOf(ANTSTATUS) != @alignOf(u64))
+        @compileError("CRITCIAL: ANTSTATUS is not longer ABI-compatible.");
+}
+
+/// ABI-safe status code for errors/etc.
+pub const ANTSTATUS = packed struct {
     code: u32,
     reserved: u16 = 0,
     kind: Kind,
 
-    pub const SUCCESS: Status = .fromU64(0x0);
+    pub const SUCCESS: ANTSTATUS = .fromU64(0x0);
 
     pub inline fn err(code: ErrorCode) @This() {
         return .{
@@ -37,8 +46,14 @@ pub const Status = packed struct {
         invalid_alignment,
         invalid_parameter,
         unsupported_operation,
+        not_yet_implemented,
+        out_of_bounds,
+        invalid_handle,
         _,
     };
+
+    /// Zig Error Set for ANTSTATUS Errors.
+    pub const ZigError = @call(.compile_time, internal.generateErrorSet, .{}) || error{UnknownError};
 
     pub inline fn asError(self: @This()) ?ErrorCode {
         if (self.kind != .err) return null;
@@ -46,43 +61,46 @@ pub const Status = packed struct {
         return @enumFromInt(self.code);
     }
 
-    pub inline fn intoZigError(self: Status) !void {
+    /// Convert from ANTSTATUS to a zig error union where if self is an error
+    /// the corresponding error is returned as ZIG ERROR.
+    pub inline fn intoZigError(self: ANTSTATUS) ZigError!void {
         const err_: ErrorCode = self.asError() orelse return;
-        switch (err_) {
-            .general_error => return error.GeneralError,
-            .ummappable_region => return error.UnmappableRegion,
-            .permission_denied => return error.PermissionDenied,
-            .invalid_alignment => return error.InvalidAlignment,
-            .invalid_parameter => return error.InvalidParameter,
-            .not_mapped => return error.NotMapped,
-            .bitmap_corrupted => return error.BitmapCorrupted,
-            .unsupported_operation => return error.UnsupportedOperation,
-            .out_of_memory => return error.OutOfMemory,
-            .not_found => return error.NotFound,
-            _ => return error.UnknownError,
+
+        inline for (internal.ERROR_CODE_VARIANTS) |cerr| {
+            if (err_ == @field(ErrorCode, cerr.name)) {
+                return internal.getZigErrorByCodeName(cerr.name);
+            }
         }
+        return error.UnknownError;
     }
 
-    pub inline fn asU64(self: Status) u64 {
+    /// Converts a Zig Error into an ANTSTATUS value.
+    pub inline fn fromZigError(e: ZigError) ANTSTATUS {
+        inline for (internal.ERROR_CODE_VARIANTS) |cerr| {
+            if (e == internal.getZigErrorByCodeName(cerr.name)) {
+                return .err(@field(ErrorCode, cerr.name));
+            }
+        }
+
+        return .err(.general_error);
+    }
+
+    pub inline fn asU64(self: ANTSTATUS) u64 {
         return @bitCast(self);
     }
 
-    pub inline fn fromU64(raw: u64) Status {
+    pub inline fn fromU64(raw: u64) ANTSTATUS {
         return @bitCast(raw);
     }
 
-    comptime {
-        if (@sizeOf(Status) != @sizeOf(u64))
-            @compileError("zig status type not same size as u64.");
-    }
-
     pub fn format(
-        self: *const Status,
+        self: *const ANTSTATUS,
         writer: anytype,
     ) !void {
+        // TODO: This should be allocated on the heap perhaps?
         var kind_buf: [8]u8 = undefined;
-
         var code_buf: [255]u8 = undefined;
+
         const kind = std.ascii.upperString(&kind_buf, @tagName(self.kind));
 
         if (kind.len <= 1 and self.asU64() != 0) {
@@ -105,5 +123,53 @@ pub const Status = packed struct {
         } else {
             try writer.print("ANTSTATUS_{s}_{s}", .{ kind, code });
         }
+    }
+};
+
+const internal = struct {
+    /// Maximum supported number of character in a single word.
+    const MAX_SUPPORTED_WORD_LEN = 50;
+    /// Alias for getting the field of ErrorCode.
+    const ERROR_CODE_VARIANTS = @typeInfo(ANTSTATUS.ErrorCode).@"enum".fields;
+    /// Comptime helper to translate all raw error codes into a zig error set.
+    pub inline fn generateErrorSet() type {
+        var zig_errors: [ERROR_CODE_VARIANTS.len]std.builtin.Type.Error = undefined;
+
+        for (ERROR_CODE_VARIANTS, 0..) |err_, idx| {
+            var zig_err_buf = std.mem.zeroes([err_.name.len + 1]u8);
+            zig_errors[idx] = .{ .name = internal.convertToZigErrorName(&zig_err_buf, err_.name)[0.. :0] };
+        }
+
+        return @Type(.{ .error_set = &zig_errors });
+    }
+
+    /// Convert snake_case code name into zig ErrorName (TitleCase).
+    pub inline fn convertToZigErrorName(comptime buffer: []u8, comptime name: []const u8) []u8 {
+        @setEvalBranchQuota(5000);
+        if (buffer.len < name.len) {
+            @compileError("buffer too small");
+        }
+
+        var zig_err = std.ArrayList(u8).initBuffer(buffer);
+        var word_buf: [MAX_SUPPORTED_WORD_LEN]u8 = undefined;
+        var iter = std.mem.splitSequence(u8, name, "_");
+
+        while (iter.next()) |word| {
+            // limit the length of a single word to allow for `word_buf` to be allocated once with a fixed size.
+            if (word.len > MAX_SUPPORTED_WORD_LEN) @compileError(std.fmt.comptimePrint(
+                "error variant name \"{s}\" is longer than the maximum lenght of {d}",
+                .{ word, MAX_SUPPORTED_WORD_LEN },
+            ));
+            @memcpy(word_buf[0..word.len], word);
+            word_buf[0] = std.ascii.toUpper(word[0]);
+            zig_err.appendSliceAssumeCapacity(word_buf[0..word.len]);
+        }
+
+        return zig_err.items;
+    }
+
+    pub inline fn getZigErrorByCodeName(comptime codename: []const u8) ANTSTATUS.ZigError {
+        comptime var zig_err_buf = std.mem.zeroes([codename.len + 1]u8);
+        return @field(ANTSTATUS.ZigError, internal.convertToZigErrorName(&zig_err_buf, codename));
     }
 };

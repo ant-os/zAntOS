@@ -1,12 +1,163 @@
 const std = @import("std");
-const ANTSTATUS = @import("status.zig").Status;
+const ANTSTATUS = @import("status.zig").ANTSTATUS;
 const heap = @import("heap.zig");
 const filesystem = @import("filesystem.zig");
 const callbacks = @import("driverCallbacks.zig");
+
+pub const SimpleKVPairs = extern struct {
+    keys: ?[*:0]const u8,
+    values: ?[*]const u64,
+
+    pub const none: SimpleKVPairs = .{
+        .keys = null,
+        .values = null,
+    };
+
+    pub inline fn keyNames(comptime T: type) [:0]const u8 {
+        var keys: []const u8 = "";
+
+        const fields = std.meta.fields(T);
+        inline for (fields) |field| {
+            keys = std.fmt.comptimePrint("{s}{s}\xFF", .{ keys, field.name });
+        }
+
+        return keys ++ "\x00";
+    }
+
+    /// Convert a zig fields into a "SKVPs"(Simple ABI-safe key-value Pairs).
+    pub inline fn construct(params: anytype) !SimpleKVPairs {
+        // WARNING: DO NOT REMOVE! Otherwiese the compiler's optimization will lead to UB in certain cases.
+        _ = std.mem.doNotOptimizeAway(params);
+
+        const fields = std.meta.fields(@TypeOf(params));
+
+        const values = try heap.allocator.alloc(u64, fields.len);
+
+        inline for (fields, 0..) |field, idx| {
+            values[idx] = intoRawValue(@field(params, field.name));
+        }
+
+        return .{ .keys = @call(.compile_time, keyNames, .{@TypeOf(params)}), .values = values.ptr };
+    }
+
+    inline fn intoRawValue(value: anytype) u64 {
+        return switch (@typeInfo(@TypeOf(value))) {
+            // TODO: Move to seperate functions and extend.
+            .int => @intCast(value),
+            .pointer => @intFromPtr(value),
+            .bool => @intCast(@intFromBool(value)),
+            .comptime_int => @intCast(value),
+            .null => @intCast(0),
+            else => @compileError(std.fmt.comptimePrint("invalid type {s}", .{@typeName(value)})),
+        };
+    }
+
+    const MAX_SUPPORTED_PAIRS = 50;
+
+    pub fn format(self: *const SimpleKVPairs, writer: anytype) !void {
+        try writer.writeAll("{ ");
+
+        if (self.values == null) {
+            try writer.writeAll(" }");
+            return;
+        }
+
+        var offset: u64 = 0;
+        var param: []const u8 = undefined;
+        var counter: u32 = 0;
+
+        for (0..MAX_SUPPORTED_PAIRS) |idx| {
+            param = std.mem.sliceTo(self.keys.?[offset..], '\xFF');
+
+            if (param.len == 0) break;
+
+            if (counter != 0) try writer.writeAll(", ");
+            counter += 1;
+            offset += param.len + 1;
+
+            if (self.values) |values| {
+                try writer.print("{s}=0x{x}", .{
+                    param,
+                    values[idx],
+                });
+            } else try writer.writeAll(param);
+        }
+
+        try writer.writeAll(" }");
+    }
+
+    pub inline fn parseInto(self: SimpleKVPairs, comptime T: type) ANTSTATUS.ZigError!T {
+        const FIELDS = @typeInfo(T).@"struct".fields;
+
+        comptime if (FIELDS.len == 0) return;
+        comptime if (FIELDS.len > 64) @compileError("more than 64 driver parameters are not supported");
+
+        var offset: u64 = 0;
+        var param: []const u8 = undefined;
+
+        var parsed: T = undefined;
+        var set = std.bit_set.IntegerBitSet(FIELDS.len).initEmpty();
+
+        inline for (FIELDS, 0..) |field, fidx| {
+            if (field.defaultValue()) |def| {
+                set.set(fidx);
+                @field(parsed, field.name) = def;
+            }
+        }
+
+        if (self.keys) |keys| {
+            parse: for (0..255) |index| {
+                const values = self.values orelse break :parse;
+
+                param = std.mem.sliceTo(keys[offset..], '\xFF');
+
+                if (param.len == 0) break;
+
+                offset += param.len + 1;
+                inline for (FIELDS, 0..) |field, fidx| {
+                    comptime if (@sizeOf(field.type) > @sizeOf(u64)) {
+                        @compileError(std.fmt.comptimePrint("size of the driver parameter '{s}' is too large.", .{field.name}));
+                    };
+                    if (std.ascii.eqlIgnoreCase(param, field.name)) {
+                        const fieldty = @typeInfo(field.type);
+
+                        const value: field.type = switch (fieldty) {
+                            .int => @truncate(values[index]),
+                            .pointer => @ptrFromInt(values[index]),
+                            .@"enum" => |enu| blk: {
+                                if (enu.is_exhaustive) @compileError(std.fmt.comptimePrint(
+                                    "enum as driver parameter is exhaustive {s}",
+                                    .{@typeName(field.type)},
+                                ));
+
+                                break :blk @as(field.type, @enumFromInt(values[index]));
+                            },
+                            .bool => values[index] != 0,
+                            .void => continue :parse,
+                            else => |t| {
+                                @compileError(std.fmt.comptimePrint(
+                                    "the type {s} is not valid for a driver parameter",
+                                    .{@typeName(@Type(t))},
+                                ));
+                            },
+                        };
+
+                        set.set(fidx);
+                        @field(parsed, field.name) = value;
+                    }
+                }
+            }
+        }
+
+        if (set.count() != FIELDS.len) return error.InvalidParameter;
+
+        return parsed;
+    }
+};
+
 pub const DriverObject = extern struct {
     display_name: [255]u8,
-    paramter_count: u64,
-    paramter_values: ?[*]const ParameterDesc,
+    global_parameters: SimpleKVPairs,
     callbacks: [callbacks.MAXIMUM_INDEX + 1]usize,
 
     pub inline fn setCallback(
@@ -106,7 +257,7 @@ pub fn register(
     init_fn: *const DriverInitFunc,
     paramters: ?[*]const ParameterDesc,
     param_count: usize,
-) !*const DriverDescriptor {
+) !*DriverDescriptor {
     var desc = try heap.allocator.create(DriverDescriptor);
 
     desc.* = std.mem.zeroInit(DriverDescriptor, desc.*);
@@ -116,8 +267,7 @@ pub fn register(
     desc.type_ = type_;
     std.mem.copyForwards(u8, &desc.object.display_name, name);
     if (paramters != null and param_count != 0) {
-        desc.object.paramter_count = @intCast(param_count);
-        desc.object.paramter_values = paramters;
+        desc.object.global_parameters = .none;
     }
     desc.init_func = init_fn;
     drivers += 1;

@@ -35,7 +35,7 @@ pub fn install() !HANDLE {
 
     try desc.init();
 
-    return try resource.create(null, .driver, @ptrCast(desc));
+    return try resource.create(null, .driver, @ptrCast(@constCast(desc)));
 }
 
 fn init(object: *DriverObject) callconv(.c) ANTSTATUS {
@@ -55,17 +55,11 @@ fn init(object: *DriverObject) callconv(.c) ANTSTATUS {
 
 fn mount(
     _: *const DriverObject,
-    backing_dev: HANDLE,
-    param_keys: [*]u8,
-    param_values: [*]u64,
+    params: driverManager.SimpleKVPairs,
     out_handle: **anyopaque,
 ) callconv(.c) ANTSTATUS {
-    _ = param_keys;
-    _ = param_values;
-
-    // TODO: Validation
-
-    out_handle.* = @ptrCast(backing_dev);
+    _ = params;
+    _ = out_handle;
 }
 
 pub fn keReadBuffer(handle: HANDLE, buf: []u8) !void {
@@ -88,6 +82,7 @@ fn open(
     filename_len: usize,
     out_desc: **anyopaque,
 ) callconv(.c) ANTSTATUS {
+    _ = fs_handle;
     klog.debug("open(\"{s}\") called.", .{filename[0..filename_len]});
 
     var desc = heap.allocator.create(FileDescriptor) catch return .err(.out_of_memory);

@@ -7,16 +7,25 @@ const klog = std.log.scoped(.kernel);
 const paging = @import("paging.zig");
 const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
-const ANTSTATUS = antstatus.Status;
+const ANTSTATUS = antstatus.ANTSTATUS;
 const filesystem = @import("filesystem.zig");
 const driverManager = @import("driverManager.zig");
 const driverCallbacks = @import("driverCallbacks.zig");
 const builtindrv_initrdfs = @import("initrdfs.zig");
+const ramdisk = @import("ramdisk.zig");
+const resource = @import("resource.zig");
+
+pub const BlockDevice = @import("blockdev.zig");
 
 const fontEmbedded = @embedFile("font.psf");
 const QEMU_DEBUGCON = 0xe9;
 
-pub const std_options: std.Options = .{ .log_level = .debug, .logFn = kernelLog };
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+    .logFn = kernelLog,
+    .fmt_max_depth = 4,
+};
+
 pub fn kernelLog(
     comptime message_level: std.log.Level,
     comptime scope: @TypeOf(.enum_literal),
@@ -110,21 +119,46 @@ pub noinline fn kmain() !void {
     klog.debug("c-style error code: 0x{x}.", .{status.asU64()});
     klog.debug("casted from int of 0x70..3: {f}", .{ANTSTATUS.fromU64(0x7000000000000003)});
 
-    const initrdfs_drv = try builtindrv_initrdfs.install();
-    const mynote = try filesystem.open(initrdfs_drv, "note.text");
-    const fileinfo = try filesystem.getfileinfo(initrdfs_drv, mynote);
-    defer heap.allocator.destroy(fileinfo); // new as it no longer returns-by-value.
+    var desc = try driverManager.register("ramdisk", .block, ramdisk.init, null, 0);
+    try desc.init();
 
-    klog.debug("{any}", .{fileinfo});
+    const dhandle = try resource.create(null, .driver, @ptrCast(desc));
 
-    const buf = try heap.allocator.alloc(u8, fileinfo.size);
-    defer heap.allocator.free(buf);
+    const params = try driverManager.SimpleKVPairs.construct(.{
+        .base = bootboot.bootboot.initrd_ptr,
+        .size = bootboot.bootboot.initrd_size,
+    });
 
-    try filesystem.read(initrdfs_drv, mynote, buf);
+    klog.debug("Goal: Attach block device using driver 'ramdisk' and parameters {f}", .{params});
 
-    klog.debug("my note: {s}", .{buf});
+    const rdblk: BlockDevice = try BlockDevice.attach(dhandle, params, null);
 
-    try filesystem.close(initrdfs_drv, mynote);
+    klog.debug("success!, BlockDevice instance: {any}", .{rdblk});
+
+    klog.debug("Goal: Map the first sector using BLOCK_MAP and print out the first bytes as a string until NULL", .{});
+
+    const bytes: [*:0]u8 = @ptrCast(try rdblk.mapSectors(0, 1, null));
+
+    klog.debug("success!, mapped to address {any} and read \"{s}\"", .{ bytes, bytes });
+
+    klog.debug("Goal: Repeat the string read from last goal at offset of 257", .{});
+    klog.debug("success!, read \"{s}\"", .{bytes[257..]});
+
+    // const initrdfs_drv = try builtindrv_initrdfs.install();
+    // const mynote = try filesystem.open(initrdfs_drv, "note.text");
+    // const fileinfo = try filesystem.getfileinfo(initrdfs_drv, mynote);
+    // defer heap.allocator.destroy(fileinfo); // new as it no longer returns-by-value.
+
+    // klog.debug("{any}", .{fileinfo});
+
+    // const buf = try heap.allocator.alloc(u8, fileinfo.size);
+    // defer heap.allocator.free(buf);
+
+    // try filesystem.read(initrdfs_drv, mynote, buf);
+
+    // klog.debug("my note: {s}", .{buf});
+
+    // try filesystem.close(initrdfs_drv, mynote);
 
     klog.info("Reached end of kmain()", .{});
 }
