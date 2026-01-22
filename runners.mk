@@ -9,7 +9,7 @@ MEMORY_SIZE ?= 1G
 #	qemu-system-x86_64 -drive file=$(OUT_DIR)/$(OSNAME)-bios.img,format=raw -serial stdio
 
 qemu-cd: dump-config dump-deps disk
-	qemu-system-$(ARCH) -cdrom $(OUT_DIR)/$(OSNAME)-$(FW_LOADER).img  -debugcon mon:stdio -m 1G -net none -d int,cpu_reset -no-reboot -machine q35
+	qemu-system-$(ARCH) -cdrom $(OUT_DIR)/$(OSNAME)-$(FW_LOADER).img -display none -display none -serial telnet:localhost:1234,server=on,wait=on -debugcon mon:stdio -m 1G -net none -d int,cpu_reset -no-reboot -machine q35
 
 # grubcdrom: grub.iso
 # 	qemu-system-x86_64 -cdrom grub.iso -serial stdio

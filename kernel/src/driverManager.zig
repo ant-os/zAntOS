@@ -196,13 +196,17 @@ pub const DriverType = enum {
 
 pub const DriverInitFunc = fn (*DriverObject) callconv(.c) ANTSTATUS;
 
+pub fn defalt_init(_: *DriverObject) callconv(.c) ANTSTATUS {
+    return .err(.unsupported_operation);
+}
+
 pub const DriverDescriptor = struct {
-    node: std.DoublyLinkedList.Node,
-    resources: std.DoublyLinkedList,
-    resource_count: u64,
+    node: std.DoublyLinkedList.Node = .{},
+    resources: std.DoublyLinkedList = .{},
+    resource_count: u64 = 0,
     object: *DriverObject,
-    init_func: *const DriverInitFunc,
-    type_: DriverType,
+    init_func: *const DriverInitFunc = &defalt_init,
+    type_: DriverType = .generic,
 
     pub fn init(self: *const DriverDescriptor) !void {
         try self.init_func(self.object).intoZigError();

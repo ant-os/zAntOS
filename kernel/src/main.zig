@@ -1,3 +1,9 @@
+//! AntOS Operating System Kernel Main File
+
+// AntOS Kernel
+
+const antos_kernel = @import("root");
+
 const std = @import("std");
 const bootboot = @import("bootboot.zig");
 const io = @import("io.zig");
@@ -7,14 +13,16 @@ const klog = std.log.scoped(.kernel);
 const paging = @import("paging.zig");
 const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
-const ANTSTATUS = antstatus.ANTSTATUS;
+pub const ANTSTATUS = antstatus.ANTSTATUS;
 const filesystem = @import("filesystem.zig");
 const driverManager = @import("driverManager.zig");
 const driverCallbacks = @import("driverCallbacks.zig");
 const builtindrv_initrdfs = @import("initrdfs.zig");
 const ramdisk = @import("ramdisk.zig");
 const resource = @import("resource.zig");
+const early_serial = @import("early_serial.zig");
 
+pub const Executable = @import("executable.zig");
 pub const BlockDevice = @import("blockdev.zig");
 
 const fontEmbedded = @embedFile("font.psf");
@@ -43,6 +51,9 @@ pub fn kernelLog(
         // std.io.Writer.print(w: *Writer, comptime fmt: []const u8, args: anytype)
     };
 }
+
+var serial = early_serial.SerialPort.new(early_serial.COM1);
+var allocating_wr = std.io.Writer.Allocating.init(heap.allocator);
 
 pub noinline fn kmain() !void {
     defer heap.dumpSegments();
@@ -119,32 +130,57 @@ pub noinline fn kmain() !void {
     klog.debug("c-style error code: 0x{x}.", .{status.asU64()});
     klog.debug("casted from int of 0x70..3: {f}", .{ANTSTATUS.fromU64(0x7000000000000003)});
 
-    var desc = try driverManager.register("ramdisk", .block, ramdisk.init, null, 0);
-    try desc.init();
+    klog.info("kernel exe: {any}", .{Executable.kernel()});
 
-    const dhandle = try resource.create(null, .driver, @ptrCast(desc));
+    klog.debug("handle: {any}", .{resource.keAllocateHandle(.directory)});
+    heap.dumpSegments();
 
-    const params = try driverManager.SimpleKVPairs.construct(.{
-        .base = bootboot.bootboot.initrd_ptr,
-        .size = bootboot.bootboot.initrd_size,
-    });
+    try serial.init();
 
-    klog.debug("Goal: Attach block device using driver 'ramdisk' and parameters {f}", .{params});
+    klog.debug("created com1 connection", .{});
+    //var rd = &serial.reade, , )
 
-    const rdblk: BlockDevice = try BlockDevice.attach(dhandle, params, null);
+    _ = try serial.writer.print("{any}{any}\n\r", .{ serial, status });
 
-    klog.debug("success!, BlockDevice instance: {any}", .{rdblk});
+    klog.debug("tested writer", .{});
 
-    klog.debug("Goal: Map the first sector using BLOCK_MAP and print out the first bytes as a string until NULL", .{});
+    const old_reader = serial.reader.adaptToOldInterface();
 
-    const bytes: [*:0]u8 = @ptrCast(try rdblk.mapSectors(0, 1, null));
+    while (true) {
+        serial.writeByte('>');
+        const msg = try old_reader.readUntilDelimiterAlloc(heap.allocator, '\n', 120);
 
-    klog.debug("success!, mapped to address {any} and read \"{s}\"", .{ bytes, bytes });
+        klog.info("message received via serial: {s}", .{msg});
 
-    klog.debug("Goal: Repeat the string read from last goal at offset of 257", .{});
-    klog.debug("success!, read \"{s}\"", .{bytes[257..]});
+        _ = try serial.writer.splatBytesAll("HELLO!\n\r", 4);
+    }
 
-    // const initrdfs_drv = try builtindrv_initrdfs.install();
+    // var desc = try driverManager.register("ramdisk", .block, ramdisk.init, null, 0);
+    // try desc.init();
+
+    // const dhandle = try resource.create(null, .driver, @ptrCast(desc));
+
+    // const params = try driverManager.SimpleKVPairs.construct(.{
+    //     .base = bootboot.bootboot.initrd_ptr,
+    //     .sizer = bootboot.bootboot.initrd_size,
+    // });
+
+    // klog.debug("Goal: Attach block device using driver 'ramdisk' and parameters {f}", .{params});
+
+    // const rdblk: BlockDevice = try BlockDevice.attach(dhandle, params, null);
+
+    // klog.debug("success!, BlockDevice instance: {any}", .{rdblk});
+
+    // klog.debug("Goal: Map the first sector using BLOCK_MAP and print out the first bytes as a string until NULL", .{});
+
+    // const bytes: [*:0]u8 = @ptrCast(try rdblk.mapSectors(0, 1, null));
+
+    // klog.debug("success!, mapped to address {any} and read \"{s}\"", .{ bytes, bytes });
+
+    // klog.debug("Goal: Repeat the string read from last goal at offset of 257", .{});
+    // klog.debug("success!, read \"{s}\"", .{bytes[257..]});
+
+    // // const initrdfs_drv = try builtindrv_initrdfs.install();
     // const mynote = try filesystem.open(initrdfs_drv, "note.text");
     // const fileinfo = try filesystem.getfileinfo(initrdfs_drv, mynote);
     // defer heap.allocator.destroy(fileinfo); // new as it no longer returns-by-value.

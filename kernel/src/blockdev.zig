@@ -12,7 +12,7 @@ pub const Info = extern struct {
     sector_count: u64,
 };
 
-const BlockDevice = @This();
+const Self = @This();
 
 handle: HANDLE,
 
@@ -20,7 +20,7 @@ pub fn attach(
     driver_handle: HANDLE,
     parameters: SimpleKVPairs,
     out_status: ?*ANTSTATUS,
-) ANTSTATUS.ZigError!BlockDevice {
+) ANTSTATUS.ZigError!Self {
     const driver = driver_handle.asDriver() orelse return error.InvalidHandle;
 
     const attach_cb = driver.callback(callbacks.BLOCK_ATTACH) orelse return error.UnsupportedOperation;
@@ -41,7 +41,7 @@ pub fn attach(
 }
 
 pub fn mapSectors(
-    self: BlockDevice,
+    self: Self,
     sector: u64,
     num_sectors: u64,
     out_status: ?*ANTSTATUS,

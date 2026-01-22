@@ -4,6 +4,7 @@ const std = @import("std");
 const driverManager = @import("driverManager.zig");
 const filesystem = @import("filesystem.zig");
 const blockdev = @import("blockdev.zig");
+const resource = @import("resource.zig");
 
 const DriverObject = driverManager.DriverObject;
 const HANDLE = @import("types.zig").HANDLE;
@@ -40,28 +41,23 @@ pub const DELETE: Callback = .{
 pub const FS_MOUNT: Callback = .{
     .driver_ty = .filesystem,
     .idx = index(6),
-    .signature = fn (
-        driver_object: *const DriverObject,
-        params: driverManager.SimpleKVPairs,
-        out_handler: **anyopaque,
-    ) callconv(.c) ANTSTATUS,
+    .signature = fn (fs: *resource.FilesystemObject) callconv(.c) ANTSTATUS,
 };
 
 pub const FS_UNMOUNT: Callback = .{
     .driver_ty = .filesystem,
     .idx = index(7),
-    .signature = fn (*const DriverObject, *anyopaque) callconv(.c) ANTSTATUS,
+    .signature = fn (fs: *resource.FilesystemObject) callconv(.c) ANTSTATUS,
 };
 
 pub const FS_OPEN: Callback = .{
     .driver_ty = .filesystem,
     .idx = index(8),
     .signature = fn (
-        *const DriverObject,
-        *anyopaque,
-        [*]const u8,
-        usize,
-        **anyopaque,
+        dir: *resource.DirectoryObject,
+        file: *resource.FileObject,
+        name: [*]const u8,
+        name_len: usize,
     ) callconv(.c) ANTSTATUS,
 };
 
@@ -69,28 +65,7 @@ pub const FS_CLOSE: Callback = .{
     .driver_ty = .filesystem,
     .idx = index(9),
     .signature = fn (
-        *const DriverObject,
-        *anyopaque,
-    ) callconv(.c) ANTSTATUS,
-};
-
-pub const FS_GET_FILE_INFO: Callback = .{
-    .driver_ty = .filesystem,
-    .idx = index(10),
-    .signature = fn (
-        *const DriverObject,
-        *anyopaque,
-        *filesystem.FileInfo,
-    ) callconv(.c) ANTSTATUS,
-};
-
-pub const FS_SEEK: Callback = .{
-    .driver_ty = .filesystem,
-    .idx = index(11),
-    .signature = fn (
-        *const DriverObject,
-        *anyopaque,
-        usize,
+        file: *resource.FileObject,
     ) callconv(.c) ANTSTATUS,
 };
 
@@ -98,10 +73,10 @@ pub const FS_READ: Callback = .{
     .driver_ty = .filesystem,
     .idx = index(12),
     .signature = fn (
-        *const DriverObject,
-        *anyopaque,
-        [*]u8,
-        usize,
+        file: *resource.FileObject,
+        buffer: [*]u8,
+        buffer_size: usize,
+        offset: u64,
     ) callconv(.c) ANTSTATUS,
 };
 

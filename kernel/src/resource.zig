@@ -1,8 +1,11 @@
 const std = @import("std");
 const heap = @import("heap.zig");
 const filesystem = @import("filesystem.zig");
+const root = @import("root");
+const ANTSTATUS = root.ANTSTATUS;
 
 const DriverDescriptor = @import("driverManager.zig").DriverDescriptor;
+const DriverObject = @import("driverManager.zig").DriverObject;
 
 pub const ChardevSpecialization = enum(u6) {
     generic = 0,
@@ -11,66 +14,153 @@ pub const ChardevSpecialization = enum(u6) {
     _,
 };
 
-pub const DeviceType = union(enum) {
-    generic,
+pub const DeviceCategory = enum(u8) {
+    general,
     block,
     filesystem,
-    chardev: packed struct(u8) {
-        specialization: ChardevSpecialization,
-        write: bool,
-        read: bool,
-    },
+    chardev,
 };
 
-pub const ResourceType = union(enum) {
+pub const ResourceType = enum(u8) {
     invalid,
     driver,
     file,
-    device: DeviceType,
+    filesystem,
+    directory,
+    device,
+};
+
+pub const DeviceObject = extern struct {
+    category: DeviceCategory = .general,
+    type_tag: u8 = 0,
+    device_id: u16 = 0,
+    vendor_id: u16 = 0,
+    private: ?*anyopaque = null,
+};
+
+pub const FileObject = extern struct {
+    fs_handle: ?*FilesystemObject = null,
+    backing_device: ?*DeviceObject = null,
+    private: ?*anyopaque = null,
+    size: u64 = 0,
+    blocks: u64 = 0,
+    flags: packed struct(u8) {
+        readonly: bool = false,
+        system: bool = false,
+        hidden: bool = false,
+        link: bool = false,
+        reserved: u4 = 0,
+    } = .{},
+    created: u64 = 0,
+    updated: u64 = 0,
+};
+
+pub const FilesystemObject = extern struct { root_dir_handle: *DirectoryObject, private: ?*anyopaque = null, flags: packed struct(u8) {
+    pseudo: bool = false,
+    readonly: bool = false,
+    reserved: u6 = 0,
+} = .{} };
+
+pub const DirectoryObject = extern struct {
+    fs_handle: ?*FilesystemObject = null,
+    parent: ?*DirectoryObject = null,
+    num_entries_hint: u64 = 0,
+};
+
+pub const VfsNode = struct {
+    navigation: std.DoublyLinkedList.Node,
+    parent: ?*ResourceDescriptor,
+    name_override: ?[*:0]const u8,
 };
 
 pub const ResourceDescriptor = struct {
-    owner: ?*DriverDescriptor,
-    node: std.DoublyLinkedList.Node,
-    internal: ?*anyopaque,
-    type: ResourceType,
+    owner: ?*root.Executable = null,
+    resource_node: std.DoublyLinkedList.Node = .{},
 
-    pub inline fn isGlobal(self: *const ResourceDescriptor) bool {
-        return self.owner == null;
-    }
+    vfs_node: VfsNode = .{
+        .navigation = .{},
+        .parent = null,
+        .name_override = null,
+    },
 
-    pub inline fn asDriver(self: *const ResourceDescriptor) ?*DriverDescriptor {
-        if (self.type != .driver and self.internal != null) return null;
-        return @ptrCast(@alignCast(self.internal));
-    }
+    object: union(ResourceType) {
+        invalid: void,
+        driver: DriverDescriptor,
+        file: FileObject,
+        filesystem: FilesystemObject,
+        directory: DirectoryObject,
+        device: DeviceObject,
+    } = .invalid,
+
+    refcount: u64 = 0,
 };
 
-var global_resources: std.DoublyLinkedList = .{};
-var global_resource_count: usize = 0;
+pub fn keAllocateHandle(
+    ty: ResourceType,
+) !*ResourceDescriptor {
+    const desc = try heap.allocator.create(ResourceDescriptor);
+    errdefer heap.allocator.destroy(desc);
+
+    switch (ty) {
+        .invalid => desc.object = .invalid,
+        .driver => {
+            const dobj = try heap.allocator.create(DriverObject);
+            dobj.* = std.mem.zeroInit(DriverObject, .{});
+            desc.object = .{ .driver = .{ .object = dobj } };
+        },
+        .file => desc.object = .{ .file = .{} },
+        .filesystem => {
+            const rootdir = try keAllocateHandle(.directory);
+            desc.object = .{
+                .filesystem = .{ .root_dir_handle = &rootdir.object.directory },
+            };
+        },
+        .directory => desc.object = .{ .directory = .{} },
+        .device => desc.object = .{ .device = .{} },
+    }
+
+    desc.owner = @constCast(root.Executable.kernel().asManaged());
+    desc.owner.?.resources.append(&desc.resource_node);
+    desc.owner.?.unmanaged.num_resources += 1;
+    desc.refcount = 0;
+    desc.vfs_node = .{
+        .navigation = .{},
+        .parent = null,
+        .name_override = null,
+    };
+
+    return desc;
+}
 
 pub fn create(
     owner: ?*DriverDescriptor,
     ty: ResourceType,
     handle: *anyopaque,
 ) !*const ResourceDescriptor {
-    if (owner == null and ty == .file) return error.InvalidParameter;
+    // if (owner == null and ty == .file) return error.InvalidParameter;
 
-    var resources = if (owner != null) &owner.?.resources else &global_resources;
+    // var resources = if (owner != null) &owner.?.resources else &global_resources;
 
-    const desc: *ResourceDescriptor = try heap.allocator.create(ResourceDescriptor);
+    // const desc: *ResourceDescriptor = try heap.allocator.create(ResourceDescriptor);
 
-    desc.* = .{
-        .owner = owner,
-        .internal = handle,
-        .type = ty,
-        .node = .{},
-    };
+    // desc.* = .{
+    //     .owner = owner,
+    //     .internal = handle,
+    //     .type = ty,
+    //     .node = .{},
+    // };
 
-    resources.append(&desc.node);
+    // resources.append(&desc.node);
 
-    if (owner != null) owner.?.resource_count += 1 else global_resource_count += 1;
+    // if (owner != null) owner.?.resource_count += 1 else global_resource_count += 1;
 
-    return desc;
+    // return desc;
+
+    _ = owner;
+    _ = ty;
+    _ = handle;
+
+    @panic("todo");
 }
 
 pub fn dropResource(desc: *ResourceDescriptor) !void {
@@ -84,15 +174,15 @@ pub fn dropResource(desc: *ResourceDescriptor) !void {
         // TODO: call CHAR_CLOSE
     } else return error.InvalidDescriptor;
 
-    deleteResource(desc);
+    // deleteResource(desc);
 }
 
-pub fn deleteResource(desc: *ResourceDescriptor) void {
-    const resources = if (desc.isGlobal()) &global_resources else &desc.owner.?.resources;
+// pub fn deleteResource(desc: *ResourceDescriptor) void {
+//     const resources = if (desc.isGlobal()) &global_resources else &desc.owner.?.resources;
 
-    resources.remove(desc);
+//     resources.remove(desc);
 
-    if (desc.isGlobal()) global_resource_count -= 1 else desc.owner.?.resource_count -= 1;
+//     if (desc.isGlobal()) global_resource_count -= 1 else desc.owner.?.resource_count -= 1;
 
-    heap.allocator.destroy(desc);
-}
+//     heap.allocator.destroy(desc);
+// }
