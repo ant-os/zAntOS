@@ -7,12 +7,16 @@ const CLOCK_FREQ = 115200;
 
 pub const COM1: u16 = 0x3f8;
 
+/// SAFETY: This is NOT thread safe but we can assume that we don't have threads at the stage this serial port
+/// drvier will be used at.
 var read_buffer: [8]u8 = undefined;
 
+/// TODO: Use less magic values and check initalized status.
 pub const SerialPort = struct {
     const Self = @This();
 
     ioport: u16,
+    initalized: bool = false,
     reader: std.io.Reader,
     writer: std.io.Writer = .{
         .vtable = &std.io.Writer.VTable{
@@ -24,11 +28,11 @@ pub const SerialPort = struct {
     fn drainWriter(w: *std.io.Writer, data: []const []const u8, splat: usize) std.io.Writer.Error!usize {
         const self: *SerialPort = @fieldParentPtr("writer", w);
 
-        // klog.debug("drainWriter() called on serial port {x} with data of {any} and splat of {d}", .{
-        //     self.ioport,
-        //     data,
-        //     splat,
-        // });
+        klog.debug("drainWriter() called on serial port {x} with data of {s} and splat of {d}", .{
+            self.ioport,
+            data[0],
+            splat,
+        });
 
         var written: usize = 0;
 
@@ -71,7 +75,7 @@ pub const SerialPort = struct {
         return read;
     }
 
-    pub fn init(self: *const Self) !void {
+    pub fn init(self: *Self) !void {
         const port = self.ioport;
         io.outb(port + 1, 0x00);
         io.outb(port + 3, 0x80);
@@ -88,6 +92,8 @@ pub const SerialPort = struct {
 
         // loop back test passed
         io.outb(port + 4, 0x0F);
+
+        self.initalized = true;
     }
 
     pub inline fn new(port: u16) Self {

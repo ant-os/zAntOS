@@ -21,6 +21,7 @@ const builtindrv_initrdfs = @import("initrdfs.zig");
 const ramdisk = @import("ramdisk.zig");
 const resource = @import("resource.zig");
 const early_serial = @import("early_serial.zig");
+const shell = @import("shell/shell.zig");
 
 pub const Executable = @import("executable.zig");
 pub const BlockDevice = @import("blockdev.zig");
@@ -140,20 +141,7 @@ pub noinline fn kmain() !void {
     klog.debug("created com1 connection", .{});
     //var rd = &serial.reade, , )
 
-    _ = try serial.writer.print("{any}{any}\n\r", .{ serial, status });
-
-    klog.debug("tested writer", .{});
-
-    const old_reader = serial.reader.adaptToOldInterface();
-
-    while (true) {
-        serial.writeByte('>');
-        const msg = try old_reader.readUntilDelimiterAlloc(heap.allocator, '\n', 120);
-
-        klog.info("message received via serial: {s}", .{msg});
-
-        _ = try serial.writer.splatBytesAll("HELLO!\n\r", 4);
-    }
+    try shell.run(&serial.writer, &serial.reader);
 
     // var desc = try driverManager.register("ramdisk", .block, ramdisk.init, null, 0);
     // try desc.init();
@@ -211,10 +199,19 @@ fn mydrv_init(o: *driverManager.DriverObject) callconv(.c) ANTSTATUS {
 
 pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
     _ = trace;
-    _ = addr;
 
     _ = io.DirectPortIO.writeString(0xe9, msg);
     _ = io.DirectPortIO.writeString(0xe9, "\n^ PANIC IN EARLY KERNEL CODE\n");
+
+    if (serial.initalized) {
+        serial.writeBytes("\n\r==== KERNEL PANIC ====\n\r");
+        serial.writeBytes("* Status: <zig panic>\n\r");
+        serial.writeBytes("* Message: ");
+        serial.writeBytes(msg);
+        serial.writeBytes("\n\r* Panicked at 0x");
+        if (addr) |a| serial.writeBytes(&std.fmt.hex(a)) else serial.writeBytes("<unkown>");
+        serial.writeBytes("\n\r* Panic Type: ZIG_LANG_PANIC");
+    }
     while (true) {
         asm volatile ("hlt");
     }
