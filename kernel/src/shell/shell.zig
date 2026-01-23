@@ -1,5 +1,6 @@
 const std = @import("std");
 const heap = @import("../heap.zig");
+const gdt = @import("../gdt.zig");
 
 const CommandLine = *std.mem.TokenIterator(u8, .any);
 const commands = struct {
@@ -16,6 +17,15 @@ const commands = struct {
         const message = if (cmdline.peek() != null) cmdline.rest() else "user requested panic";
 
         @panic(message);
+    }
+
+    pub fn dumpgdt(w: *std.io.Writer, _: CommandLine) !void {
+        const gdtr = gdt.GdtDescriptor.get();
+        try w.print("Global Descriptor Table at 0x{x} with the following entries:\r\n", .{gdtr.offset});
+        for (gdtr.entries(), 0..) |entry, idx| {
+            const sel = gdt.SegmentSelector.fromDescriptor(idx, entry);
+            try w.print("Segment 0x{x}: {any}\r\n", .{sel.raw(), entry});
+        }
     }
 
     // unknown command hook

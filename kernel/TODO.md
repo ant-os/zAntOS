@@ -20,5 +20,6 @@ A Task can also be skipped with `s` or active denoted by `-`.
 - [s] Architecture Abstration (Maybe Later).
 - [x] Initrd Parsing
 - [ ] Documenation (ensure.)
-- [ ] Serial I/0 Abstraction.
-- [ ] Simple shell via COM1.
+- [x] Serial I/0 Abstraction.
+- [x] Simple shell via COM1.
+- [ ] Interrupts

@@ -22,6 +22,7 @@ const ramdisk = @import("ramdisk.zig");
 const resource = @import("resource.zig");
 const early_serial = @import("early_serial.zig");
 const shell = @import("shell/shell.zig");
+const gdt = @import("gdt.zig");
 
 pub const Executable = @import("executable.zig");
 pub const BlockDevice = @import("blockdev.zig");
@@ -57,6 +58,8 @@ var serial = early_serial.SerialPort.new(early_serial.COM1);
 var allocating_wr = std.io.Writer.Allocating.init(heap.allocator);
 
 pub noinline fn kmain() !void {
+    gdt.init();
+
     defer heap.dumpSegments();
 
     klog.info("Starting zAntOS...", .{});
@@ -140,6 +143,7 @@ pub noinline fn kmain() !void {
 
     klog.debug("created com1 connection", .{});
     //var rd = &serial.reade, , )
+
 
     try shell.run(&serial.writer, &serial.reader);
 
