@@ -3,7 +3,7 @@ include ../config.mk
 all: $(BUILD_DIR)/kernel
 
 $(BUILD_DIR)/kernel: src/**
-	zig build -Dtarget=$(ARCH)-freestanding-none \
+	zig build\
 		-Doptimize=ReleaseFast --prefix ./ --prefix-exe-dir ../$(BUILD_DIR) 
 
 clean:

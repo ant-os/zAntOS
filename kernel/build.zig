@@ -1,7 +1,32 @@
 const std = @import("std");
 
+fn target_features(query: *std.Target.Query) !void {
+    query.cpu_model = .{ .explicit = std.Target.Cpu.Model.generic(query.cpu_arch.?) };
+    switch (query.cpu_arch.?) {
+        .x86_64 => {
+            const Features = std.Target.x86.Feature;
+
+            query.cpu_features_add.addFeature(@intFromEnum(Features.soft_float));
+
+            query.cpu_features_sub.addFeature(@intFromEnum(Features.mmx));
+            query.cpu_features_sub.addFeature(@intFromEnum(Features.sse));
+            query.cpu_features_sub.addFeature(@intFromEnum(Features.sse2));
+            query.cpu_features_sub.addFeature(@intFromEnum(Features.avx));
+            query.cpu_features_sub.addFeature(@intFromEnum(Features.avx2));
+        },
+        else => return error.invalid_arch,
+    }
+}
+
 pub fn build(b: *std.Build) !void {
-    const target = b.standardTargetOptions(.{});
+    const arch = .x86_64;
+    var selected_target: std.Target.Query = .{
+        .abi = .none,
+        .os_tag = .freestanding,
+        .cpu_arch = arch,
+    };
+    try target_features(&selected_target);
+    const target = b.resolveTargetQuery(selected_target);
     const optimize = b.standardOptimizeOption(.{});
     const module = b.addModule("zantos-kernel", .{
         .strip = false,

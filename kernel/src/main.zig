@@ -23,6 +23,7 @@ const resource = @import("resource.zig");
 const early_serial = @import("early_serial.zig");
 const shell = @import("shell/shell.zig");
 const gdt = @import("gdt.zig");
+const idt = @import("idt.zig");
 
 pub const Executable = @import("executable.zig");
 pub const BlockDevice = @import("blockdev.zig");
@@ -58,8 +59,6 @@ var serial = early_serial.SerialPort.new(early_serial.COM1);
 var allocating_wr = std.io.Writer.Allocating.init(heap.allocator);
 
 pub noinline fn kmain() !void {
-    gdt.init();
-
     defer heap.dumpSegments();
 
     klog.info("Starting zAntOS...", .{});
@@ -139,11 +138,19 @@ pub noinline fn kmain() !void {
     klog.debug("handle: {any}", .{resource.keAllocateHandle(.directory)});
     heap.dumpSegments();
 
+    for (0..255) |i| {
+        klog.debug("{any}", .{idt.nth_entry(@intCast(i))});
+    }
+
     try serial.init();
 
     klog.debug("created com1 connection", .{});
-    //var rd = &serial.reade, , )
+    asm volatile ("sti");
+    asm volatile ("int $0xaa");
+    asm volatile ("cli");
 
+    klog.debug("int called", .{});
+    //var rd = &serial.reade, , )
 
     try shell.run(&serial.writer, &serial.reader);
 
@@ -232,6 +239,9 @@ export fn _start() callconv(.c) noreturn {
     // const w = bootboot.fb_width;
     // const h = bootboot.fb_height;
     // var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
+
+    gdt.init();
+    idt.init();
 
     _ = kmain() catch |e| {
         klog.err("\n\nkmain() failed with error: {any}\n", .{e});
