@@ -138,18 +138,14 @@ pub noinline fn kmain() !void {
     klog.debug("handle: {any}", .{resource.keAllocateHandle(.directory)});
     heap.dumpSegments();
 
-    for (0..255) |i| {
-        klog.debug("{any}", .{idt.nth_entry(@intCast(i))});
-    }
-
     try serial.init();
 
     klog.debug("created com1 connection", .{});
-    asm volatile ("sti");
-    asm volatile ("int $0xaa");
-    asm volatile ("cli");
 
     klog.debug("int called", .{});
+
+    asm volatile ("sti");
+
     //var rd = &serial.reade, , )
 
     try shell.run(&serial.writer, &serial.reader);

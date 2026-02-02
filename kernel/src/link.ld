@@ -34,7 +34,7 @@ PROVIDE(mmio        = ABSOLUTE(0xfffffffff8000000));
 fb          = 0xfffffffffc000000;
 bootboot    = 0xffffffffffe00000;
 PROVIDE(environment = ABSOLUTE(0xffffffffffe01000));
-initstack = 1024;
+initstack = 1024 * 4;
 PHDRS
 {
   boot PT_LOAD;                                /* one single loadable segment */

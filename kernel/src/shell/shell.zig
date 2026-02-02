@@ -29,6 +29,15 @@ const commands = struct {
         }
     }
 
+    pub fn int(_: *std.io.Writer, cmdline: CommandLine) !void {
+        _ = cmdline.next();
+
+        // const vector = try std.fmt.parseInt(u8, cmdline.next() orelse return error.ArgumentExpected, 0);
+
+        // try w.print("Invoking interrupt vector 0x{x}.\r\n", .{vector});
+        asm volatile ("int $0x80");
+    }
+
     // unknown command hook
     // pub fn @"unknown command"(w: *std.io.Writer, cmdline: *std.mem.TokenIterator(u8, .any)) !void {
     //     try w.print("command \"{s}\" with cmdline \"{s}\".\n", .{ cmdline.next().?, cmdline.rest() });
