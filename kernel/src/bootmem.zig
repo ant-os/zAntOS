@@ -12,9 +12,32 @@
 const std = @import("std");
 const bootboot = @import("bootboot.zig");
 const log = std.log.scoped(.bootmem);
+const builtin = @import("builtin");
 
 var enabled: bool = false;
 var alloc: std.heap.FixedBufferAllocator = undefined;
+var seal_base_allocs: ?usize = null;
+var num_allocs: usize = 0;
+
+pub noinline fn enterSealedRegion() void {
+    if (builtin.mode != .Debug) return;
+    
+    if (!enabled) @panic("bootmem not enabled");
+    if (seal_base_allocs != null) @panic("already in sealed region");
+
+    seal_base_allocs = num_allocs;
+}
+
+pub noinline fn leaveAndDetectLeaks() void {
+    if (builtin.mode != .Debug) return;
+
+    if (seal_base_allocs == null) @panic("not not in sealed region"); 
+
+//    std.log.debug("region = {d}, endidx = {d}", .{region.?, alloc.end_index});
+    if (num_allocs > seal_base_allocs.?) @panic("bootmem memory leak detected");
+
+    seal_base_allocs = null;
+}
 
 pub fn init() !void {
     if (enabled) return error.AlreadyEnabled;
@@ -61,11 +84,17 @@ pub const allocator: std.mem.Allocator = .{
 fn vt_alloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
     if (!enabled) @panic("bootmem not enabled");
 
+    num_allocs += 1;
+
     return alloc.allocator().rawAlloc(len, alignment, ret_addr);
 }
 
 fn vt_free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
     if (!enabled) @panic("bootmem not enabled");
+
+    if (num_allocs == 0 and builtin.mode == .Debug) @panic("bootmem double free detected");
+
+    num_allocs -= 1;
 
     return alloc.allocator().rawFree(memory, alignment, ret_addr);
 }

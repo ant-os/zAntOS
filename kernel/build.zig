@@ -35,16 +35,32 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .code_model = .kernel,
         .red_zone = false,
+        .stack_check = true,
     });
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_module = module,
+        .use_llvm = true,
+        .use_lld = true,
         .version = .{ .major = 0, .minor = 3, .patch = 1, .pre = "unstable" },
     });
+
+    const options = b.addOptions();
+    options.addOption(
+        []const u8,
+        "image_name",
+        b.option(
+            []const u8,
+            "image-name",
+            "The name of the kernel image in the final system.",
+        ) orelse "AntOSKrnl.bin",
+    );
+    module.addOptions("options", options);
 
     //  kernel.setLinkerScript(b.path("src/link.ld"))
 
     kernel.linker_script = b.path("src/link.ld");
+    kernel.stack_size = 0x1000;
 
     // kernel.strip = true;
     b.verbose = true;

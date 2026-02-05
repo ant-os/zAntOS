@@ -27,6 +27,7 @@ const idt = @import("idt.zig");
 const bootmem = @import("bootmem.zig");
 const arch = @import("arch.zig");
 const kpcb = @import("kpcb.zig");
+const symbols = @import("symbols.zig");
 
 pub const Executable = @import("executable.zig");
 pub const BlockDevice = @import("blockdev.zig");
@@ -77,7 +78,7 @@ pub fn kernelLog(
     };
 }
 
-var serial = early_serial.SerialPort.new(early_serial.COM1);
+pub var serial = early_serial.SerialPort.new(early_serial.COM1);
 var allocating_wr = std.io.Writer.Allocating.init(heap.allocator);
 
 pub noinline fn kmain() !void {
@@ -216,25 +217,44 @@ pub noinline fn kmain() !void {
     klog.info("Reached end of kmain()", .{});
 }
 
+pub var in_panic = false;
 pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
     _ = trace;
 
+    if (in_panic) arch.halt_cpu();
+    in_panic = true;
     if (serial.initalized) {
         serial.writeBytes("\n\r==== KERNEL PANIC ====\n\r");
         serial.writeBytes("* Status: <zig panic>\n\r");
         serial.writeBytes("* Message: ");
         serial.writeBytes(msg);
-        serial.writeBytes("\n\r* Panicked at 0x");
-        if (addr) |a| serial.writeBytes(&std.fmt.hex(a)) else serial.writeBytes("<unkown>");
-        serial.writeBytes("\n\r* Panic Type: ZIG_LANG_PANIC");
+        serial.writeBytes("\n\r* Panic Stacktrace:\r\n");
+
+        var iter = std.debug.StackIterator.init(addr, null);
+        serial.writer.print("* <module> <address> <symbol>+<offset>\r\n", .{}) catch unreachable;
+        while (iter.next()) |fp| {
+            const resolved = symbols.resolve(fp) orelse symbols.Resolved{
+                .name = "<unknown>",
+                .offset = 0x0
+            };
+            serial.writer.print(
+                "* kernel 0x{x} {s}+0x{x}\r\n",
+                .{
+                    fp,
+                    resolved.name,
+                    resolved.offset,
+                },
+            ) catch unreachable;
+        }
+        serial.writer.print("* End of panic, halting cpu.\r\n", .{}) catch unreachable;
     }
-    while (true) {
-        asm volatile ("hlt");
-    }
+
+    arch.halt_cpu();
 }
 
 // Entry point, called by BOOTBOOT Loader
 export fn _start() callconv(.c) noreturn {
+    // @setRuntimeSafety(false);
     const log = std.log.scoped(.kernel_init);
     // On BSP if loader is valid:
     // 1. Init COM1 serial
@@ -244,19 +264,22 @@ export fn _start() callconv(.c) noreturn {
     // 5. initalize paging and update struct pointers.
     // Last: Start shell.
 
+    gdt.init();
+    idt.init();
+
     serial.init() catch earlybug(.serial_failed_init);
     bootmem.init() catch |e| {
         log.err("failed to initalize bootmem: {s}", .{@errorName(e)});
         arch.halt_cpu();
     };
-    
+
     kpcb.early_init() catch |e| {
         log.err("failed to initalize KPCB for BSP: {s}", .{@errorName(e)});
         arch.halt_cpu();
     };
 
     klog.debug("bsp: {d}", .{arch.bspid()});
-    
+
     klog.debug("value of kpcb.local.abc after init: 0x{x}", .{kpcb.local.abc});
 
     klog.debug("setting kpcb.local.abc 0xabc123", .{});
@@ -265,8 +288,16 @@ export fn _start() callconv(.c) noreturn {
     const ncb: *allowzero kpcb = @ptrFromInt(0x0);
 
     klog.debug("flat:offsetof(kpcb.abc) = {x}", .{ncb.abc});
-    klog.debug("gs:offsetof(kpcb.abc)=  {x}", .{ kpcb.local.abc });
+    klog.debug("gs:offsetof(kpcb.abc)=  {x}", .{kpcb.local.abc});
 
+    symbols.init() catch |e| {
+        log.err("failed to initalize symbols: {s}", .{@errorName(e)});
+        arch.halt_cpu();
+    };
+
+    _ = bootmem.disable();
+
+    _ = bootmem.allocator.alloc(u8, 8) catch unreachable;
 
     klog.debug("kmain() skipped.", .{});
     arch.halt_cpu();
@@ -320,4 +351,3 @@ export fn _start() callconv(.c) noreturn {
         asm volatile ("hlt");
     }
 }
-

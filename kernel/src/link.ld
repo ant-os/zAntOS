@@ -34,7 +34,7 @@ PROVIDE(mmio        = ABSOLUTE(0xfffffffff8000000));
 fb          = 0xfffffffffc000000;
 bootboot    = 0xffffffffffe00000;
 PROVIDE(environment = ABSOLUTE(0xffffffffffe01000));
-initstack = 1024 * 4;
+initstack = 1024 * 8;
 PHDRS
 {
   boot PT_LOAD;                                /* one single loadable segment */
@@ -42,6 +42,8 @@ PHDRS
 SECTIONS
 {
     . = 0xffffffffffe02000;
+    
+    __kernel_start = .;
     .text : {
         KEEP(*(.text.boot)) *(.text .text.*)   /* code */
         *(.rodata .rodata.*)                   /* data */
@@ -53,5 +55,6 @@ SECTIONS
         *(COMMON)
     } :boot
 
-/DISCARD/ : { *(.eh_frame) *(.comment) }
+    __kernel_end = .;
+    /DISCARD/ : { *(.eh_frame) *(.comment) }
 }

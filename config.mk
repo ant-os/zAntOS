@@ -1,7 +1,9 @@
+# old makefile-based config
+
 ifndef _MAKE_CONFIG_
 _MAKE_CONFIG_ = 1
 ARCH := x86_64
-FW_LOADER := bios
+FW_LOADER := efi
 OVMF := /usr/share/qemu/OVMF.fd
 OSNAME := zAntOS
 KERNEL_EXE := AntOSKrnl.bin

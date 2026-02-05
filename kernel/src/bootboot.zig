@@ -142,3 +142,8 @@ pub const BOOTBOOT = extern struct {
         return @as([*]MMapEnt, (&self.mmap)[0..1])[0 .. self.mmap_entry_count() - 1];
     }
 };
+
+pub noinline fn initrd() []const u8 {
+    const base: [*]const u8 = @ptrFromInt(bootboot.initrd_ptr);
+    return base[0..bootboot.initrd_size];
+}
