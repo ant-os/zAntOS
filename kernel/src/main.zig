@@ -24,6 +24,9 @@ const early_serial = @import("early_serial.zig");
 const shell = @import("shell/shell.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
+const bootmem = @import("bootmem.zig");
+const arch = @import("arch.zig");
+const kpcb = @import("kpcb.zig");
 
 pub const Executable = @import("executable.zig");
 pub const BlockDevice = @import("blockdev.zig");
@@ -37,21 +40,40 @@ pub const std_options: std.Options = .{
     .fmt_max_depth = 4,
 };
 
+pub noinline fn earlybug(comptime key: anytype) noreturn {
+    asm volatile (std.fmt.comptimePrint(
+            \\jmp __earlybug_{0s}
+            \\__earlybug_{0s}: ud2
+            \\jmp __earlybug_{0s}
+        ,
+            .{@tagName(key)},
+        )
+        :
+        : [caller] "{eax}" (@returnAddress()),
+    );
+
+    std.mem.doNotOptimizeAway(@extern(
+        *const fn () callconv(.c) noreturn,
+        .{ .name = "__earlybug_" ++ @tagName(key) },
+    ));
+
+    unreachable;
+}
+
 pub fn kernelLog(
     comptime message_level: std.log.Level,
     comptime scope: @TypeOf(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    io.DirectPortIO.new(0xe9).writer().print(std.fmt.comptimePrint("[{s}] {s}: {s}\n", .{
+    if (!serial.initalized) earlybug(.serial_uninit);
+
+    serial.writer.print(std.fmt.comptimePrint("[{s}] {s}: {s}\r\n", .{
         @tagName(message_level),
         @tagName(scope),
         format,
     }), args) catch {
-        io.DirectPortIO.writeString(0xe9, "[<log internal error>] format = ");
-        io.DirectPortIO.writeString(0xe9, format);
-        io.outb(0xe9, '\n');
-        // std.io.Writer.print(w: *Writer, comptime fmt: []const u8, args: anytype)
+        @panic("failed to write to output");
     };
 }
 
@@ -194,21 +216,8 @@ pub noinline fn kmain() !void {
     klog.info("Reached end of kmain()", .{});
 }
 
-fn mydrv_init(o: *driverManager.DriverObject) callconv(.c) ANTSTATUS {
-    klog.debug("driver: name = {s}", .{o.name});
-
-    var first_param = o.paramter_values.?[0];
-
-    klog.info("first param = {s}", .{first_param.getName()});
-
-    return .SUCCESS;
-}
-
 pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
     _ = trace;
-
-    _ = io.DirectPortIO.writeString(0xe9, msg);
-    _ = io.DirectPortIO.writeString(0xe9, "\n^ PANIC IN EARLY KERNEL CODE\n");
 
     if (serial.initalized) {
         serial.writeBytes("\n\r==== KERNEL PANIC ====\n\r");
@@ -226,18 +235,41 @@ pub fn panic(msg: []const u8, trace: anytype, addr: ?usize) noreturn {
 
 // Entry point, called by BOOTBOOT Loader
 export fn _start() callconv(.c) noreturn {
-    if (bootboot.bootboot.numcores > 1)
-        klog.err("More than one CPU cores are currently not supported", .{});
+    const log = std.log.scoped(.kernel_init);
+    // On BSP if loader is valid:
+    // 1. Init COM1 serial
+    // 2. find free segment large enough to page bitmap
+    // 3. use the page frame alloc to allocate the KPCB for the BSP.
+    // 4. initalize basic idt in KPCB.
+    // 5. initalize paging and update struct pointers.
+    // Last: Start shell.
 
-    // NOTE: this code runs on all cores in parallel
+    serial.init() catch earlybug(.serial_failed_init);
+    bootmem.init() catch |e| {
+        log.err("failed to initalize bootmem: {s}", .{@errorName(e)});
+        arch.halt_cpu();
+    };
+    
+    kpcb.early_init() catch |e| {
+        log.err("failed to initalize KPCB for BSP: {s}", .{@errorName(e)});
+        arch.halt_cpu();
+    };
 
-    // const s = bootboot.fb_scanline;
-    // const w = bootboot.fb_width;
-    // const h = bootboot.fb_height;
-    // var framebuffer: [*]u32 = @ptrCast(@alignCast(&fb));
+    klog.debug("bsp: {d}", .{arch.bspid()});
+    
+    klog.debug("value of kpcb.local.abc after init: 0x{x}", .{kpcb.local.abc});
 
-    gdt.init();
-    idt.init();
+    klog.debug("setting kpcb.local.abc 0xabc123", .{});
+    kpcb.local.abc = 0xabc123;
+
+    const ncb: *allowzero kpcb = @ptrFromInt(0x0);
+
+    klog.debug("flat:offsetof(kpcb.abc) = {x}", .{ncb.abc});
+    klog.debug("gs:offsetof(kpcb.abc)=  {x}", .{ kpcb.local.abc });
+
+
+    klog.debug("kmain() skipped.", .{});
+    arch.halt_cpu();
 
     _ = kmain() catch |e| {
         klog.err("\n\nkmain() failed with error: {any}\n", .{e});
@@ -288,3 +320,4 @@ export fn _start() callconv(.c) noreturn {
         asm volatile ("hlt");
     }
 }
+
