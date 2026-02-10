@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) !void {
     try target_features(&selected_target);
     const target = b.resolveTargetQuery(selected_target);
     const optimize = b.standardOptimizeOption(.{});
-    const module = b.addModule("zantos-kernel", .{
+    const kmod = b.addModule("zantos-kernel", .{
         .strip = false,
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) !void {
     });
     const kernel = b.addExecutable(.{
         .name = "kernel",
-        .root_module = module,
+        .root_module = kmod,
         .use_llvm = true,
         .use_lld = true,
         .version = .{ .major = 0, .minor = 3, .patch = 1, .pre = "unstable" },
@@ -55,7 +55,8 @@ pub fn build(b: *std.Build) !void {
             "The name of the kernel image in the final system.",
         ) orelse "AntOSKrnl.bin",
     );
-    module.addOptions("options", options);
+    kmod.addOptions("options", options);
+    kmod.addImport("kmod", kmod);
 
     //  kernel.setLinkerScript(b.path("src/link.ld"))
 
@@ -68,6 +69,22 @@ pub fn build(b: *std.Build) !void {
     //try kernel.force_undefined_symbols.put("bootboot", undefined);
 
     b.installArtifact(kernel);
+
+    const ktest = b.addTest(.{
+        .name = "ktest",
+        .root_module = kmod,
+        .use_lld = true,
+        .use_llvm = true,
+        .test_runner = .{
+            .mode = .simple,
+            .path = b.path("src/test_main.zig"),
+        },
+    });
+
+    ktest.linker_script = b.path("src/link.ld");
+    ktest.stack_size = 0x1000;
+
+    b.installArtifact(ktest);
 
     const install_docs = b.addInstallDirectory(.{
         .source_dir = kernel.getEmittedDocs(),

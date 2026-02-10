@@ -1,6 +1,13 @@
 include config.mk
 include requirements.mk
 
+
+ifdef TEST
+KERNEL_BUILD = $(BUILD_DIR)/ktest
+else
+KERNEL_BUILD = $(BUILD_DIR)/kernel
+endif
+
 INITRD_DIRS = $(INITRD_DIR)
 
 all: dump-deps disk rom
@@ -10,12 +17,12 @@ ifneq ($(ARCH), x86-64)
 endif
 
 kernel: 
-	$(MKBOOTIMG) check $(BUILD_DIR)/kernel
+	$(MKBOOTIMG) check $(KERNEL_BUILD)
 
 # create an initial ram disk image with the kernel inside
 initrd: kernel
 		@mkdir -pv $(INITRD_DIRS)
-		@cp -v $(BUILD_DIR)/kernel $(INITRD_DIR)/$(KERNEL_EXE)
+		@cp -v $(KERNEL_BUILD) $(INITRD_DIR)/$(KERNEL_EXE)
 
 # create hybrid disk / cdrom image or ROM image
 disk: $(MKBOOTIMG) initrd mkbootimg.json
