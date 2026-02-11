@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) !void {
         .code_model = .kernel,
         .red_zone = false,
         .stack_check = true,
+        .omit_frame_pointer = false,
     });
     const kernel = b.addExecutable(.{
         .name = "kernel",
@@ -70,19 +71,23 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(kernel);
 
+    b.verbose_cc = true;
+    b.verbose_air = true;
+    
     const ktest = b.addTest(.{
         .name = "ktest",
         .root_module = kmod,
         .use_lld = true,
         .use_llvm = true,
+        
         .test_runner = .{
+
             .mode = .simple,
             .path = b.path("src/test_main.zig"),
         },
     });
 
     ktest.linker_script = b.path("src/link.ld");
-    ktest.stack_size = 0x1000;
 
     b.installArtifact(ktest);
 

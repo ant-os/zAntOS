@@ -5,6 +5,7 @@ const stacktrace = @import("debug/stacktrace.zig");
 const symbols = @import("debug/elf_symbols.zig");
 const arch = @import("arch.zig");
 const logger = @import("logger.zig");
+const status = @import("status.zig");
 
 var zig_panic: bool = false;
 
@@ -32,6 +33,7 @@ pub fn handle_zig_panic(msg: []const u8, trace: ?*const stacktrace.StackTrace, a
     try logger.newline();
     try logger.writeline("End of panic, halting cpu.");
     try logger.writer().flush();
-}
 
+    @breakpoint();
+}
 

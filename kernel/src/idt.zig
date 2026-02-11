@@ -4,20 +4,17 @@ const std = @import("std");
 
 const segmentation = @import("segmentation.zig");
 const descriptor = @import("descriptor.zig");
+const arch = @import("arch.zig");
+const stacktrace = @import("debug/stacktrace.zig");
+const logger = @import("logger.zig");
+const kpcb = @import("kpcb.zig");
+const ktest = @import("ktest.zig");
 
 export var IDT: [256]GateDescriptor = std.mem.zeroes([256]GateDescriptor);
 
 pub inline fn nth_entry(n: u8) *GateDescriptor {
     return &IDT[n];
 }
-
-const InterruptStackFrame = extern struct {
-    ip: usize,
-    cs: usize,
-    flags: usize,
-    sp: usize,
-    ss: usize,
-};
 
 pub const Exception = enum(u8) {
     devide_error = 0,
@@ -83,20 +80,26 @@ pub fn StackFrame(ErrorCode: type) type {
     ));
 
     return extern struct {
-        gs_base: usize,
-        fs_base: usize,
         cr4: u64,
         cr3: u64,
         cr2: u64,
         cr0: u64,
         registers: SavedRegisters align(8),
-        vector: InterruptVector align(8),
+        vector: extern union {
+            raw: u8,
+            exception: Exception,
+        } align(8),
         error_code: ErrorCode align(8),
         rip: usize,
         cs: segmentation.Selector align(8),
         eflags: u64, // TODO: Typed EFLAGS.
         rsp: usize,
         ss: segmentation.Selector align(8),
+
+        pub fn is_reasonable(self: *@This()) bool {
+            _ = self;
+            return true;
+        }
     };
 }
 
@@ -126,14 +129,6 @@ comptime {
         \\pushq %rax
         \\mov %cr4, %rax
         \\pushq %rax
-        \\mov  $0xC0000100, %rcx
-        \\rdmsr
-        \\pushq %rax # push the first part
-        \\movl %edx, 4(%rsp) # push the second part
-        \\mov $0xC0000101, %rax
-        \\rdmsr
-        \\pushq %rax # push the first part
-        \\movl %edx, 4(%rsp) # push the second part
         // if from usermode we swapgs
     ++ std.fmt.comptimePrint("\ntestb $1, {d}(%rsp)\n", .{
         @offsetOf(StackFrame(u64), "cs"),
@@ -149,7 +144,7 @@ comptime {
         .{@offsetOf(StackFrame(u64), "vector")},
     ) ++
         \\movq %rsp, %rdi
-        \\callq *__isrs(, %rdx, 8)
+        \\callq __handle_interrupt
         \\
         \\.global __isr_return
         \\.type __isr_return, @function
@@ -161,14 +156,14 @@ comptime {
         \\jz 2f
         \\swapgs
         \\2: cld
-        \\movl     4(%rsp), %edx
-        \\popq     %rax
-        \\movq     $0xC0000101, %rcx
-        \\wrmsr
-        \\movl     4(%rsp), %edx
-        \\popq     %rax
-        \\movq     $0xC0000100, %rcx
-        \\wrmsr
+        //\\movl     4(%rsp), %edx
+        //\\popq     %rax
+        //\\movq     $0xC0000101, %rcx
+        //\\wrmsr
+        //\\movl     4(%rsp), %edx
+        //\\popq     %rax
+        //\\movq     $0xC0000100, %rcx
+        //\\wrmsr
         // skip control registers (4 times a 64bit register values).
         // this is because most of the control registers are either SHARED between user and kernel
         // or might be very inefficent to write to on every interrupt runtine exit(cr3).
@@ -182,7 +177,6 @@ comptime {
     ++ "\n");
 }
 
-pub export var __isrs: [256]InterruptHandler = undefined;
 pub var __stubs: [256]IsrStub = blk: {
     var stubs: [256]IsrStub = undefined;
     for (0..256) |i| {
@@ -230,8 +224,6 @@ pub fn init() void {
         // std.log.debug("IDT ENTRY: {any}", .{e});
     }
 
-    @memset(&__isrs, @ptrCast(&unhandled_interrupt));
-
     const desc = descriptor.Descriptor(GateDescriptor){
         .limit = (256 * @sizeOf(GateDescriptor)) - 1,
         .offset = @intFromPtr(&IDT[0]),
@@ -244,18 +236,57 @@ pub fn init() void {
     );
 }
 
-pub fn set_handler(vector: u8, handler: anytype) void {
-    __isrs[vector] = @ptrCast(handler);
+noinline fn handle_exception(exception: Exception, frame: *StackFrame(u64)) !bool {
+    try logger.println("CPU exception: {s}", .{@tagName(exception)});
+    try logger.writeline("Stacktrace: ");
+    try stacktrace.captureAndWriteStackTraceForFrame(
+        logger.writer(),
+        frame.rip,
+        frame.registers.rbp,
+    );
+
+    if (exception == .breakpoint) return true;
+    return false;
 }
 
-pub fn unhandled_interrupt(frame: *StackFrame(u64)) callconv(.{ .x86_64_sysv = .{} }) void {
-    std.log.debug("INTERRUPT {any}", .{frame});
+const MAX_INTERRUPT_DEPTH = 8;
+const MAX_EXCEPTION_DEPTH = 8;
 
-    var iter = std.debug.StackIterator.init(null, frame.registers.rbp);
+export fn __handle_interrupt(frame: *StackFrame(u64)) callconv(.{ .x86_64_sysv = .{} }) void {
+    kpcb.local.debug_interrupt_count += 1;
 
-    while (iter.next()) |fr| {
-        std.log.debug("STACK FRAME: 0x{x}", .{fr});
+    if (frame.vector.raw < 32) {
+        if (kpcb.local.exception_depth >= MAX_EXCEPTION_DEPTH) arch.halt_cpu();
+        kpcb.local.exception_depth += 1;
+        logger.newline() catch {};
+        const handeled = handle_exception(
+            frame.vector.exception,
+            frame,
+        ) catch unreachable;
+
+        if (!handeled) arch.halt_cpu();
+
+        kpcb.local.last_interrupt_handeled = true;
+        kpcb.local.exception_depth -= 1;
+    } else {
+        if (kpcb.local.interrupt_depth >= MAX_INTERRUPT_DEPTH) arch.halt_cpu();
+        kpcb.local.interrupt_depth += 1;
+
+        logger.println("unhandeled interrupt 0x{x}!", .{frame.vector.raw}) catch unreachable;
+        logger.writeline("Stacktrace: ") catch unreachable;
+        stacktrace.captureAndWriteStackTraceForFrame(
+            logger.writer(),
+            frame.rip,
+            frame.registers.rbp,
+        ) catch unreachable;
+
+        kpcb.local.last_interrupt_handeled = false;
+        kpcb.local.interrupt_depth -= 1;
     }
+
+    logger.println("info: trying to continue normally...", .{}) catch unreachable;
+
+    kpcb.current().last_interrupt_frame = frame.*;
 }
 
 pub const GateDescriptor = packed struct {
@@ -274,3 +305,48 @@ pub const GateDescriptor = packed struct {
     offset_high: u48,
     reserved: u32 = 0,
 };
+
+test "breakpoint" {
+    const check_fp = !@import("builtin").omit_frame_pointer;
+
+    kpcb.local.debug_interrupt_count = 0;
+
+    const expected_fp = struct {
+        pub noinline fn __test_breakpoint() usize {
+            @breakpoint();
+            return if (check_fp) @frameAddress() else 0;
+        }
+    }.__test_breakpoint();
+
+    const last_interrupt_frame = &kpcb.current().last_interrupt_frame;
+
+    try ktest.expectExtended(
+        .{},
+        @src(),
+        last_interrupt_frame.is_reasonable(),
+    );
+
+    try ktest.expectExtended(
+        .{ .count = kpcb.local.debug_interrupt_count },
+        @src(),
+        kpcb.local.debug_interrupt_count >= 1,
+    );
+
+    try ktest.expectExtended(
+        .{ .exception = last_interrupt_frame.vector.exception },
+        @src(),
+        last_interrupt_frame.vector.exception == .breakpoint,
+    );
+
+    if(check_fp) try ktest.expectExtended(
+        .{ .expected = expected_fp, .rbp = last_interrupt_frame.registers.rbp },
+        @src(),
+        last_interrupt_frame.registers.rbp == expected_fp,
+    );
+
+    try ktest.expectExtended(
+        .{},
+        @src(),
+        kpcb.local.last_interrupt_handeled,
+    );
+}

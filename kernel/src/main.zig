@@ -174,12 +174,13 @@ export fn _start() callconv(.c) noreturn {
         arch.halt_cpu();
     };
 
+    gdt.init();
+    idt.init();
+
     kpcb.early_init() catch |e| {
         log.err("failed to initalize KPCB for BSP: {s}", .{@errorName(e)});
         arch.halt_cpu();
     };
-
-    std.debug.assert(kpcb.local.canary == kpcb.CANARY);
 
     symbols.init() catch |e| {
         log.err("failed to initalize stacktraces: {s}", .{@errorName(e)});
@@ -188,8 +189,13 @@ export fn _start() callconv(.c) noreturn {
 
     if (@import("builtin").is_test) ktest.main() catch unreachable;
 
+
     klog.debug("kmain() skipped.", .{});
     arch.halt_cpu();
+}
+
+pub noinline fn software_int(comptime int: u8) void {
+    asm volatile (std.fmt.comptimePrint("int $0x{x}", .{int}));
 }
 
 comptime { std.testing.refAllDecls(@import("panic.zig")); }

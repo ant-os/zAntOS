@@ -16,6 +16,17 @@ pub fn captureAndWriteStackTrace(w: *Writer, first_addr: ?usize, fp: ?usize) !vo
     }
 }
 
+pub fn captureAndWriteStackTraceForFrame(w: *Writer, rip: usize, rbp: usize) !void {
+    var iter = std.debug.StackIterator.init(null, rbp);
+    try w.writeAll("format: #<index> <module> <address> <symbol>+<offset>\r\n");
+    var frames: usize = 1;
+    try writeStackTraceLine(w, rip, 0);
+    while (iter.next()) |addr| {
+        try writeStackTraceLine(w, addr, frames);
+        frames += 1;
+    }
+}
+
 pub fn writeStackTrace(w: *Writer, stack_trace: *const StackTrace) !void {
     try w.writeAll("format: #<index> <module> <address> <symbol>+<offset>\r\n");
 
