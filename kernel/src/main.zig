@@ -2,36 +2,33 @@
 
 // AntOS Kernel
 
-const antos_kernel = @import("root");
+const antos_kernel = @import("kmod");
 
 const std = @import("std");
 const bootboot = @import("bootboot.zig");
 const io = @import("io.zig");
-const memory = @import("memory.zig");
-const pageFrameAllocator = @import("pageFrameAllocator.zig");
 const klog = std.log.scoped(.kernel);
-const paging = @import("paging.zig");
-const heap = @import("heap.zig");
+//const paging = @import("paging.zig");
+//const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
 pub const ANTSTATUS = antstatus.ANTSTATUS;
-const filesystem = @import("filesystem.zig");
-const driverManager = @import("driverManager.zig");
-const driverCallbacks = @import("driverCallbacks.zig");
-const builtindrv_initrdfs = @import("initrdfs.zig");
-const ramdisk = @import("ramdisk.zig");
-const resource = @import("resource.zig");
+//const filesystem = @import("filesystem.zig");
+//const driverManager = @import("driverManager.zig");
+//const driverCallbacks = @import("driverCallbacks.zig");
+//const builtindrv_initrdfs = @import("initrdfs.zig");
+//const ramdisk = @import("ramdisk.zig");
+//const resource = @import("resource.zig");
 const logger = @import("logger.zig");
 const shell = @import("shell/shell.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
-const bootmem = @import("bootmem.zig");
+const bootmem = @import("mm/bootmem.zig");
 const arch = @import("arch.zig");
 const kpcb = @import("kpcb.zig");
 const symbols = @import("debug/elf_symbols.zig");
 const ktest = @import("ktest.zig");
-
-pub const Executable = @import("executable.zig");
-pub const BlockDevice = @import("blockdev.zig");
+const pfmdb = @import("mm/pfmdb.zig");
+const pframe_alloc = @import("mm/pframe_alloc.zig");
 
 const fontEmbedded = @embedFile("font.psf");
 const QEMU_DEBUGCON = 0xe9;
@@ -60,97 +57,6 @@ pub noinline fn earlybug(comptime key: anytype) noreturn {
     ));
 
     unreachable;
-}
-
-var allocating_wr = std.io.Writer.Allocating.init(heap.allocator);
-
-pub noinline fn kmain() !void {
-    // defer heap.dumpSegments();
-
-    // klog.info("Starting zAntOS...", .{});
-
-    // klog.info("Total physical memory of {d} KiB", .{memory.KePhysicalMemorySize() / 1024});
-
-    // pageFrameAllocator.init() catch |e| {
-    //     klog.err("Failed to initalize page bitmap: {s}", .{@errorName(e)});
-    //     return;
-    // };
-
-    // const myPage = try pageFrameAllocator.requestPage();
-
-    // klog.debug("my page: {d} ({x})", .{ myPage, myPage * 0x1000 });
-
-    // klog.debug("Allocated Page: {x}", .{(try pageFrameAllocator.requestPage()) * 0x1000});
-
-    // klog.info("Used Memory: {d}/{d} KiB", .{
-    //     pageFrameAllocator.getUsedMemory() / 1024,
-    //     memory.KePhysicalMemorySize() / 1024,
-    // });
-
-    // klog.info("Free Memory: {d}/{d} KiB", .{
-    //     pageFrameAllocator.getFreeMemory() / 1024,
-    //     memory.KePhysicalMemorySize() / 1024,
-    // });
-
-    // paging.init() catch |e| {
-    //     klog.err("Failed to initalize kernel paging: {s}", .{@errorName(e)});
-    //     return;
-    // };
-
-    // heap.init(1) catch |e| {
-    //     klog.err("Failed to initalize kernel heap: {s}", .{@errorName(e)});
-    //     return;
-    // };
-
-    // klog.info("Parsing initrd...", .{});
-
-    // const initrd: [*]align(1) u8 = @ptrFromInt(bootboot.bootboot.initrd_ptr);
-    // var initrd_reader = std.io.Reader.fixed(initrd[0..bootboot.bootboot.initrd_size]);
-    // var tar_iter = std.tar.Iterator.init(&initrd_reader, .{
-    //     .file_name_buffer = try heap.allocator.alloc(u8, 255),
-    //     .link_name_buffer = try heap.allocator.alloc(u8, 255),
-    // });
-
-    // var file: std.tar.Iterator.File = undefined;
-    // for (0..2) |_| {
-    //     file = (try tar_iter.next()) orelse break;
-    //     if (std.ascii.endsWithIgnoreCase(file.name, ".text")) {
-    //         klog.info("file {s} ({d} bytes): {s}", .{
-    //             file.name,
-    //             file.size,
-    //             try initrd_reader.readAlloc(heap.allocator, file.size),
-    //         });
-    //     } else {
-    //         klog.info("file {s} ({d} bytes): <not a text file>", .{
-    //             file.name,
-    //             file.size,
-    //         });
-    //     }
-
-    //     if (initrd_reader.seek == bootboot.bootboot.initrd_size - 1) break;
-    // }
-
-    // heap.dumpSegments();
-
-    // var status = ANTSTATUS.err(.invalid_parameter);
-
-    // klog.debug("status: {f}", .{status});
-    // klog.debug("zig error: {any}", .{status.intoZigError()});
-    // klog.debug("c-style error code: 0x{x}.", .{status.asU64()});
-    // klog.debug("casted from int of 0x70..3: {f}", .{ANTSTATUS.fromU64(0x7000000000000003)});
-
-    // klog.info("kernel exe: {any}", .{Executable.kernel()});
-
-    // klog.debug("handle: {any}", .{resource.keAllocateHandle(.directory)});
-    // heap.dumpSegments();
-
-    // klog.debug("created com1 connection", .{});
-
-    // klog.debug("int called", .{});
-
-    // asm volatile ("sti");
-
-    // klog.info("Reached end of kmain()", .{});
 }
 
 pub const panic = @import("panic.zig").__zig_panic_impl;
@@ -187,10 +93,40 @@ export fn _start() callconv(.c) noreturn {
         arch.halt_cpu();
     };
 
+    pfmdb.init() catch unreachable;
+    pframe_alloc.init() catch unreachable;
+
+    {
+        const tok = pfmdb.lock();
+        defer tok.release();
+
+        klog.debug("allocating two order 0 frames and then freeing them...", .{});
+
+        const mypage = pframe_alloc.allocOrder(.page, tok) catch unreachable;
+        const mypage2 = pframe_alloc.allocOrder(.page, tok) catch unreachable;
+
+        klog.debug(
+            "PFNs for the two order 0 frames    : {any}, {any}",
+            .{
+                mypage.raw(),
+                mypage2.raw(),
+            },
+        );
+
+        // now free both pages, this should cause them to be merged.
+
+        pframe_alloc.free(mypage, tok) catch unreachable;
+        pframe_alloc.free(mypage2, tok) catch unreachable;
+
+        klog.debug(
+            "first allocated frame after both frees: {any}",
+            .{mypage.frame().?},
+        );
+    }
+
     if (@import("builtin").is_test) ktest.main() catch unreachable;
+    logger.println("END", .{}) catch unreachable;
 
-
-    klog.debug("kmain() skipped.", .{});
     arch.halt_cpu();
 }
 
@@ -198,4 +134,6 @@ pub noinline fn software_int(comptime int: u8) void {
     asm volatile (std.fmt.comptimePrint("int $0x{x}", .{int}));
 }
 
-comptime { std.testing.refAllDecls(@import("panic.zig")); }
+comptime {
+    std.testing.refAllDecls(@import("panic.zig"));
+}

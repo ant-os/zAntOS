@@ -5,7 +5,7 @@
 //!
 
 const std = @import("std");
-const bootmem = @import("bootmem.zig");
+const bootmem = @import("mm/bootmem.zig");
 const arch = @import("arch.zig");
 const builtin = @import("builtin");
 const InterruptFrame = @import("idt.zig").StackFrame(u64);

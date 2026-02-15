@@ -59,6 +59,12 @@ pub inline fn expectExtended(
     }else try logger.println("==> condition passed: {s}", .{expr});
 }
 
+pub inline fn mkStaticValuePtr(val: anytype) *@TypeOf(val) {
+    return &struct {
+        pub var value: @TypeOf(val) = val;
+    }.value;
+}
+
 pub fn expectLargerOrEqualThan(value: anytype, expected: anytype) !void {
     if (value >= expected) {
         try logger.println("expect at least {any} but got {any}", .{ expected, value });

@@ -1,7 +1,7 @@
 //! ELF Symbols
 
 const std = @import("std");
-const bootmem = @import("../bootmem.zig");
+const bootmem = @import("../mm/bootmem.zig");
 const bootboot = @import("../bootboot.zig");
 const options = @import("options");
 const logger = @import("../logger.zig");

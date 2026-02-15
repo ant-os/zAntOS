@@ -135,11 +135,11 @@ pub const BOOTBOOT = extern struct {
     mmap: MMapEnt align(1),
 
     pub inline fn mmap_entry_count(self: *BOOTBOOT) usize {
-        return (self.size - 128) / 16;
+        return ((self.size - 128) / 16);
     }
 
     pub inline fn mmap_entries(self: *BOOTBOOT) []MMapEnt {
-        return @as([*]MMapEnt, (&self.mmap)[0..1])[0 .. self.mmap_entry_count() - 1];
+        return @as([*]MMapEnt, (&self.mmap)[0..0])[0 .. self.mmap_entry_count() - 1];
     }
 };
 

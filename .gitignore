@@ -1,3 +1,4 @@
 kernel/.zig-cache/*
 build
 *.local
+*.zig-cache
