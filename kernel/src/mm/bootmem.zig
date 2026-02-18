@@ -47,6 +47,11 @@ pub noinline fn managesPointer(ptr: u64) bool {
     return alloc.ownsPtr(@ptrFromInt(ptr));
 } 
 
+pub inline fn startsAt(ptr: u64) bool {
+    const current: u64 = @intFromPtr(alloc.buffer.ptr);
+    return current == ptr;
+}
+
 pub fn init() !void {
     if (enabled) return error.AlreadyEnabled;
 
@@ -64,7 +69,7 @@ pub fn init() !void {
     if (largest_region_size == 0 or largest_region == 0)
         return error.NotEnoughtPhysicalMemory;
 
-    log.info("using physical region at 0x{x} with size of {d} bytes.", .{ largest_region, largest_region_size });
+    log.info("using physical region at 0x{x} with size of {d} bytes.", .{ largest_region, largest_region_size / 32 });
 
     const base_ptr: [*]u8 = @ptrFromInt(largest_region);
 
@@ -72,13 +77,13 @@ pub fn init() !void {
     enabled = true;
 }
 
-pub fn disable() ?struct { usize, u32 } {
+pub fn disable() ?struct { mm.PhysicalAddr, u32 } {
     if (!enabled) return null;
     enabled = false;
 
     const pages = mm.PAGE_ALIGN.forward(alloc.end_index) >> mm.PAGE_SHIFT;
 
-    return .{ @intFromPtr(alloc.buffer.ptr), @intCast(pages) }; 
+    return .{ .{ .raw = @intFromPtr(alloc.buffer.ptr) }, @intCast(pages) }; 
 }
 
 pub const allocator: std.mem.Allocator = .{

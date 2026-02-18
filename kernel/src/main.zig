@@ -96,33 +96,20 @@ export fn _start() callconv(.c) noreturn {
     pfmdb.init() catch unreachable;
     pframe_alloc.init() catch unreachable;
 
-    {
-        const tok = pfmdb.lock();
-        defer tok.release();
+    const earlyPageAlloc = pframe_alloc.allocator(&pframe_alloc.AllocContext{
+        .map = pframe_alloc.defaultMapAssumeIdentity,
+        .translate = pframe_alloc.defaultTranslateAssumeIdentity,
+    });
 
-        klog.debug("allocating two order 0 frames and then freeing them...", .{});
+    var myarray = std.ArrayList(u32).empty;
 
-        const mypage = pframe_alloc.allocOrder(.page, tok) catch unreachable;
-        const mypage2 = pframe_alloc.allocOrder(.page, tok) catch unreachable;
+    myarray.append(earlyPageAlloc, 124) catch unreachable;
 
-        klog.debug(
-            "PFNs for the two order 0 frames    : {any}, {any}",
-            .{
-                mypage.raw(),
-                mypage2.raw(),
-            },
-        );
+    myarray.appendNTimes(earlyPageAlloc, 0xA, 12) catch unreachable;
 
-        // now free both pages, this should cause them to be merged.
+    log.debug("{any}", .{myarray});
 
-        pframe_alloc.free(mypage, tok) catch unreachable;
-        pframe_alloc.free(mypage2, tok) catch unreachable;
-
-        klog.debug(
-            "first allocated frame after both frees: {any}",
-            .{mypage.frame().?},
-        );
-    }
+    pframe_alloc.dumpStats(logger.writer()) catch unreachable;
 
     if (@import("builtin").is_test) ktest.main() catch unreachable;
     logger.println("END", .{}) catch unreachable;

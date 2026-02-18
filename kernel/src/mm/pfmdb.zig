@@ -12,6 +12,10 @@ const log = std.log.scoped(.pfmdb);
 var pfmdb_array: ?[]PageFrame = null;
 var global_lock: SpinLock = .{};
 
+pub inline fn baseAddress() u64 {
+    return @intFromPtr(pfmdb_array.?.ptr);
+}
+
 pub inline fn isInitalized() bool {
     return pfmdb_array != null;
 }
@@ -41,7 +45,7 @@ pub fn unlock(token: WriteToken) void {
 }
 
 pub const Pfn = enum(u32) {
-    first_root = 0,
+    @"null" = 0,
     invalid = std.math.maxInt(u32),
     _,
 
@@ -156,7 +160,7 @@ pub const PageFrame = struct {
         },
         tag: PageFrameTag = .normal,
         reserved: u8 = 0,
-        flat_pfn: u32,
+        reserved2: u32 = 0,
     };
 
     pub const State = union(PageFrameState) {
@@ -230,11 +234,11 @@ fn testing_GetPfnAndFrame(idx: u32) struct { Pfn, *PageFrame } {
 pub fn init() !void {
     if (pfmdb_array != null) @panic("pfmdb already initialized");
 
-    const pages = bootldr.totalUsablePhysicalPages();
+    const pages = bootldr.totalPhysicalPagesWithHoles();
+    log.info("Initializing PFMDB for {d} physical pages", .{pages});
 
     pfmdb_array = try bootmem.allocator.alloc(PageFrame, pages);
 
     @memset(std.mem.sliceAsBytes(pfmdb_array.?), 0x0);
 
-    log.info("Initialized PFMDB for {d} physical pages", .{pages});
 }

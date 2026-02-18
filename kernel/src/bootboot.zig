@@ -55,6 +55,10 @@ pub const MMapEnt = extern struct {
         return self.ptr;
     }
 
+    pub inline fn endPtr(self: *const Self) u64 {
+        return self.getPtr() + self.getSizeInBytes();
+    }
+
     pub inline fn getSizeInBytes(self: *const Self) u64 {
         return self.size & 0xFFFFFFFFFFFFFFF0;
     }

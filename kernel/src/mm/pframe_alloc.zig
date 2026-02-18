@@ -12,10 +12,12 @@ const log = std.log.scoped(.pframe_alloc);
 const Limit = std.Io.Limit;
 
 var global_freelists: [mm.Order.raw_max + 1]std.DoublyLinkedList = .{std.DoublyLinkedList{}} ** (mm.Order.raw_max + 1);
+var totalFreePages: std.atomic.Value(u32) = .init(0);
+var totalUsedPages: std.atomic.Value(u32) = .init(0);
+var totalReservedPages: std.atomic.Value(u32) = .init(0);
 
 fn initPageFrame(
     frame: *pfmdb.PageFrame,
-    base: usize,
     order: mm.Order,
     tag: pfmdb.PageFrameTag,
     origin: pfmdb.Pfn,
@@ -27,15 +29,13 @@ fn initPageFrame(
     };
 
     if (!root) log.debug(
-        "initalizing {s} page frame at PFN {d} with order {any}(max {any}), origin frame of {any}, tagged {s} and physical base of 0x{x}",
-        .{ if (root) "root" else "leaf", frame.pfn().?.raw(), order.raw(), max_order.raw(), origin.raw(), @tagName(tag), base },
+        "initalizing {s} page frame at PFN {d} with order {any}(max {any}), origin frame of {any}, tagged {s}.",
+        .{ if (root) "root" else "leaf", frame.pfn().?.raw(), order.raw(), max_order.raw(), origin.raw(), @tagName(tag),  },
     );
 
-    std.debug.assert(std.mem.isAligned(base, mm.PAGE_SIZE));
 
     frame.* = .{
         .info = .{
-            .flat_pfn = @intCast(base / mm.PAGE_SIZE),
             .tag = tag,
             .order = order,
             .maximum_order = max_order,
@@ -77,7 +77,6 @@ pub fn splitFrameAssumeUnused(frame: *pfmdb.PageFrame, tok: pfmdb.WriteToken) !v
 
     try initPageFrame(
         bfp,
-        (frame.info.flat_pfn + order.totalPages()) * mm.PAGE_SIZE,
         order,
         .normal,
         frame.root(),
@@ -87,7 +86,21 @@ pub fn splitFrameAssumeUnused(frame: *pfmdb.PageFrame, tok: pfmdb.WriteToken) !v
     markFreeWithFreelist(bfp);
 }
 
+inline fn markUsed(frame: *pfmdb.PageFrame) void {
+    if (frame.state != .not_present) _ = totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic);
+    _ = totalUsedPages.fetchAdd(frame.info.order.totalPages(), .monotonic);
+    frame.state = .{ .used = .{} };
+}
+
+inline fn markReserved(frame: *pfmdb.PageFrame) void {
+    if (frame.state != .not_present) _ = totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic);
+    _ = totalReservedPages.fetchAdd(frame.info.order.totalPages(), .monotonic);
+    frame.state = .reserved;
+}
+
 inline fn markFreeWithFreelist(frame: *pfmdb.PageFrame) void {
+    if (frame.state != .not_present)  _ = totalUsedPages.fetchSub(frame.info.order.totalPages(), .monotonic);
+    _ = totalFreePages.fetchAdd(frame.info.order.totalPages(), .monotonic);
     frame.state = .{ .free = .{} };
     getGlobalFreelistForOrder(frame.info.order).?.append(&frame.state.free);
 }
@@ -95,7 +108,6 @@ inline fn markFreeWithFreelist(frame: *pfmdb.PageFrame) void {
 fn initalizeRegionRoots(
     origin: pfmdb.Pfn,
     pages: u32,
-    base: usize,
     state: pfmdb.PageFrameState,
     tok: pfmdb.WriteToken,
     upper_region: ?pfmdb.Pfn,
@@ -107,13 +119,12 @@ fn initalizeRegionRoots(
     const leftover = pages - order.totalPages();
 
     log.debug(
-        "initalizing {s} root page frame at PFN {d}, order {any}, tagged {s} with physical base of 0x{x}",
-        .{ @tagName(state), frame.pfn().?.raw(), order.raw(), @tagName(kind), base },
+        "initalizing {s} root page frame at PFN {d}, order {any}, tagged {s}",
+        .{ @tagName(state), frame.pfn().?.raw(), order.raw(), @tagName(kind) },
     );
 
     try initPageFrame(
         frame,
-        base,
         order,
         kind,
         upper_region orelse .invalid,
@@ -121,27 +132,41 @@ fn initalizeRegionRoots(
     );
 
     switch (state) {
-        .reserved => frame.state = .reserved,
-        .used => frame.state = .{ .used = .{} },
+        .reserved => markReserved(frame),
+        .used => markUsed(frame),
         .free => markFreeWithFreelist(frame),
         else => return error.InvalidPageState,
     }
 
-   // _ = leftover;
-   // _ = next_region;
+    // _ = leftover;
+    // _ = next_region;
     if (leftover == 0) return order.totalPages();
 
     // sweep
     return if (next_region.absolute()) |next| try initalizeRegionRoots(
         next,
         leftover,
-        base + (order.totalPages() * mm.PAGE_SIZE),
         state,
         tok,
         upper_region,
         kind,
     ) + order.totalPages() else order.totalPages();
 }
+
+pub fn allocAny(pages: u32, tok: pfmdb.WriteToken) !pfmdb.Pfn {
+    const order = mm.Order.new(
+        @truncate(std.math.log2_int_ceil(u32, pages)),
+    ) orelse return error.UnsupportedParameterValue;
+
+    return try allocOrder(order, tok);
+}
+
+pub fn lockAndAllocAny(pages: u32) !pfmdb.Pfn {
+    const tok = pfmdb.lock();
+    defer tok.release();
+
+    return allocAny(pages, tok);
+} 
 
 pub fn allocExactOrder(order: mm.Order, tok: pfmdb.WriteToken) !pfmdb.Pfn {
     if (!order.isValid()) return error.InvalidOrder;
@@ -189,7 +214,7 @@ pub fn markUsedViaPfnAndToken(pfn: pfmdb.Pfn, tok: pfmdb.WriteToken) !void {
 
     assert(frame.state == .free);
 
-    frame.state = .{ .used = .{ .refcount = 1 } };
+    markUsed(frame);
 }
 
 pub fn getParentOfPfnForOrder(frame: pfmdb.Pfn, order: mm.Order) ?pfmdb.Pfn {
@@ -199,6 +224,12 @@ pub fn getParentOfPfnForOrder(frame: pfmdb.Pfn, order: mm.Order) ?pfmdb.Pfn {
 
 pub fn invalidateFrameByPfn(pfn: pfmdb.Pfn, tok: pfmdb.WriteToken) void {
     const frame = pfn.frameMut(tok).?;
+    _ = switch (frame.state) {
+        .free => totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic),
+        .reserved => totalReservedPages.fetchSub(frame.info.order.totalPages(), .monotonic),
+        .used => totalUsedPages.fetchSub(frame.info.order.totalPages(), .monotonic),
+        else => 0,
+    };
     frame.state = .not_present;
 }
 
@@ -291,8 +322,18 @@ fn frameFormFreelistNode(node: *std.DoublyLinkedList.Node, tok: pfmdb.WriteToken
     return @fieldParentPtr("state", state);
 }
 
-pub fn init() !void {
+pub fn dumpStats(w: *std.Io.Writer)!void {
+    const total = bootldr.totalPhysicalPagesWithHoles();
+    try w.writeAll("\r\nPHYSICAL FRAME ALLOCATOR STATE:\r\n");
+    try w.print("(stats are in 4KiB pages)\r\n", .{});
+    try w.print("Total Physical Pages: {d}\r\n", .{total});
+    try w.print("Free: {d}/{d}\r\n", .{totalFreePages.load(.monotonic), total});
+    try w.print("Used: {d}/{d}\r\n", .{totalUsedPages.load(.monotonic), total});
+    try w.print("Reserved: {d}/{d}\r\n", .{totalReservedPages.load(.monotonic), total});
+    try w.print("(PFMDB located at 0x{x})\r\n", .{pfmdb.baseAddress()});
+}
 
+pub fn init() !void {
     log.info("Initializing Physical Frame Allocator...", .{});
 
     std.debug.assert(pfmdb.isInitalized());
@@ -300,8 +341,6 @@ pub fn init() !void {
     const tok = pfmdb.lock();
     errdefer log.err("init failed releasing token...", .{});
     defer tok.release();
-
-    var region_offset: u32 = 0;
 
     for (bootldr.memory_map(), 0..) |ent, i| {
         log.debug("memory map entry {d}: {s} 0x{x} ({d} pages)", .{
@@ -311,41 +350,41 @@ pub fn init() !void {
             ent.getSizeIn4KiBPages(),
         });
 
-        if (!ent.isFree()) continue;
+        if (!ent.isFree()) {
+            _ = totalReservedPages.fetchAdd(@intCast(ent.getSizeIn4KiBPages()), .monotonic);
+        }
 
         std.debug.assert(mm.PAGE_ALIGN.check(ent.getPtr()));
 
-        const base, const pages = if (bootmem.managesPointer(ent.getPtr())) blk: {
-            const base, const usedPages = bootmem.disable() orelse @panic("bootmem already disabled");
+        const base: mm.PhysicalAddr = .{ .raw = ent.getPtr() };
+
+        const newBase, const pages = if (bootmem.startsAt(base.raw)) blk: {
+            _, const usedPages = bootmem.disable() orelse @panic("bootmem already disabled");
 
             assert(usedPages < ent.getSizeIn4KiBPages());
-
-            const bootmemPfn = pfmdb.Pfn.new(region_offset).?;
 
             log.debug("reserving bootmem region ({d} pages)...", .{usedPages});
 
             // mark bootmem region as reserved
-            region_offset += try initalizeRegionRoots(
-                bootmemPfn,
+            _ = try initalizeRegionRoots(
+                base.typed.pfn,
                 usedPages,
-                base,
                 .reserved,
                 tok,
                 null,
                 .static,
             );
 
-            const newBase: usize = @intCast(ent.getPtr() + (usedPages << mm.PAGE_SHIFT));
-            const newPages: u32 = @intCast(ent.getSizeIn4KiBPages() - usedPages);
+            const offBase: usize = @intCast(ent.getPtr() + (usedPages << mm.PAGE_SHIFT));
+            const offPages: u32 = @intCast(ent.getSizeIn4KiBPages() - usedPages);
 
-            break :blk .{ newBase, newPages };
-        } else .{ @as(usize, @intCast(ent.getPtr())), @as(u32, @intCast(ent.getSizeIn4KiBPages())) };
+            break :blk .{ mm.PhysicalAddr{ .raw = offBase }, offPages };
+        } else .{ base, @as(u32, @intCast(ent.getSizeIn4KiBPages())) };
 
         // sweep-init region roots for this memory region.
-        region_offset += try initalizeRegionRoots(
-            pfmdb.Pfn.new(region_offset).?,
+        _ = try initalizeRegionRoots(
+            newBase.typed.pfn,
             pages,
-            base,
             .free,
             tok,
             null,
@@ -357,3 +396,78 @@ pub fn init() !void {
     // we are done with init for now ;)
 
 }
+
+pub const AllocContext = struct {
+    map: *const fn (pfn: pfmdb.Pfn) ?[]u8,
+    translate: *const fn(addr: usize) ?pfmdb.Pfn,
+};
+
+pub fn defaultMapAssumeIdentity(pfn: pfmdb.Pfn) ?[]u8 {
+    const addr: mm.PhysicalAddr = .{ .typed = .{ .pfn = pfn } };
+    const base: [*]u8 = @ptrFromInt(addr.raw);
+    const size = pfn.frame().?.info.order.totalPages() * mm.PAGE_SIZE;
+    return base[0..size];
+}
+
+pub fn defaultTranslateAssumeIdentity(addr: usize) ?pfmdb.Pfn {
+    const paddr: mm.PhysicalAddr = .{ .raw = @intCast(addr) };
+    return paddr.typed.pfn;
+}
+
+pub fn allocator(context: *const AllocContext) std.mem.Allocator {
+    return .{
+        .ptr = @ptrCast(@constCast(context)),
+        .vtable = &vtable,
+    };
+}
+
+const vtable = std.mem.Allocator.VTable{
+    .alloc = vt_alloc,
+    .free = vt_free,
+    .resize = vt_resize,
+    .remap = std.mem.Allocator.noRemap,
+};
+
+fn vt_resize(rawCtx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+    _ = ret_addr;
+
+    const context: *const AllocContext = @ptrCast(@alignCast(rawCtx));
+
+    const new_size = alignment.forward(new_len);
+
+    const pfn = (context.translate(@intFromPtr(memory.ptr)) orelse return false);
+    const frame = pfn.frame() orelse return false;
+
+    return new_size <= (frame.info.order.totalPages() * mm.PAGE_SIZE);
+}
+
+fn vt_alloc(rawCtx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8{
+    _ = ret_addr;
+
+    const context: *const AllocContext = @ptrCast(@alignCast(rawCtx));
+
+    const size = alignment.forward(len);
+    const pages: u32 = @truncate(mm.PAGE_ALIGN.forward(size) >> mm.PAGE_SHIFT);
+
+    const pfn =  lockAndAllocAny(pages) catch |e| {
+        log.warn("vtable allocation failed with error: {s}", .{@errorName(e)});
+        return null;
+    };
+
+    return (context.map(pfn) orelse return null).ptr;
+}
+
+fn vt_free(rawCtx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+    _ = alignment;
+    _ = ret_addr;
+
+    const context: *const AllocContext = @ptrCast(@alignCast(rawCtx));
+
+    const pfn = context.translate(@intFromPtr(memory.ptr)) orelse {
+        log.warn("vtable free failed to translated address 0x{x}", .{@intFromPtr(memory.ptr)});
+        return;
+    };
+
+    lockAndFreeNoError(pfn);
+}
+

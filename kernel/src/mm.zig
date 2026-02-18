@@ -2,10 +2,12 @@
 
 const std = @import("std");
 const ktest = @import("ktest.zig");
+const pfmdb = @import("mm/pfmdb.zig");
 
 pub const PAGE_SHIFT = 12;
 pub const PAGE_SIZE = 0x1000;
 pub const PAGE_ALIGN = std.mem.Alignment.fromByteUnits(PAGE_SIZE);
+
 
 pub const Order = enum(u5) {
     pub const raw_max: u5 = 18;
@@ -54,4 +56,13 @@ pub const Order = enum(u5) {
 
         return Order.new(self.raw().? + off);
     }
+};
+
+pub const PhysicalAddr = packed union {
+    typed: packed struct(u64) {
+        pageoff: u12 = 0,
+        pfn: pfmdb.Pfn,
+        unused: u20 = 0,
+    },
+    raw: u64,
 };
