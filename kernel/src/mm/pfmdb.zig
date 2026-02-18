@@ -54,6 +54,10 @@ pub const Pfn = enum(u32) {
         return pfmdb_array.?.len - self.raw();
     }
 
+    pub inline fn toPhysicalAddr(self: Pfn) mm.PhysicalAddr {
+        return .{ .typed = .{ .pfn = self } };
+    }
+
     pub inline fn releativeTo(self: Pfn, other: Pfn) ?ReleativePfn {
         if (self.raw() < other.raw()) return null;
         const dist = self.raw() - other.raw();
@@ -156,28 +160,28 @@ pub const PageFrame = struct {
         maximum_order: mm.Order,
         flags: packed struct(u6) {
             root: bool,
-            reserved: u5 = 0,
+            isReserved: bool,
+            reserved: u4 = 0,
         },
         tag: PageFrameTag = .normal,
-        reserved: u8 = 0,
-        reserved2: u32 = 0,
-    };
-
-    pub const State = union(PageFrameState) {
-        not_present: void,
-        free: std.DoublyLinkedList.Node,
-        used: struct {
-            refcount: u32 = 1,
-        },
-        reserved: void,
+        active: bool = true,
+        _unused: u7 = 0,
+        refcount: u32 = 0,
     };
 
     info: Info,
-    state: State,
+    node: std.DoublyLinkedList.Node,
     origin: Pfn,
 
+    pub fn next(self: *const PageFrame) ?*const PageFrame {
+        if (self.node.next == null) return null;
+        return @fieldParentPtr("node", self.node.next.?);
+    }
+
     pub inline fn getState(self: *const PageFrame) PageFrameState {
-        return std.meta.activeTag(self.state);
+        if (!self.info.active) return .not_present;
+        if (self.info.flags.isReserved) return .reserved;
+        return if (self.info.refcount >= 1) .used else .free;
     }
 
     pub inline fn upgradeToMut(self: *const PageFrame, tok: WriteToken) *PageFrame {
@@ -187,7 +191,7 @@ pub const PageFrame = struct {
     }
 
     pub inline fn root(self: *const PageFrame) Pfn {
-        std.debug.assert(self.state != .not_present);
+        std.debug.assert(self.getState() != .not_present);
         return if (self.info.flags.root) self.pfn().? else self.origin;
     }
 
@@ -200,6 +204,10 @@ pub const PageFrame = struct {
         const index = (elem - base) / @sizeOf(PageFrame);
 
         return Pfn.new(@truncate(index));
+    }
+
+    pub fn totalPages(self: *const PageFrame) usize {
+        return @intCast(self.info.order.totalPages());
     }
 
     test pfn {

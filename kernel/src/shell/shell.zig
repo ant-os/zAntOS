@@ -1,5 +1,5 @@
 const std = @import("std");
-const heap = @import("../heap.zig");
+const heap = @import("../mm/heap.zig");
 const gdt = @import("../gdt.zig");
 const segmentation = @import("../segmentation.zig");
 

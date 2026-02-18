@@ -9,6 +9,10 @@ pub fn halt_cpu() noreturn {
     }
 }
 
+pub inline fn isCanonical(addr: usize) bool {
+    return (addr >> 48) == 0x0 or (addr >> 48) == std.math.maxInt(u16);
+}
+
 pub const Msr = enum(u32) {
     fs_base = 0xC000_0100,
     gs_base = 0xC000_0101,

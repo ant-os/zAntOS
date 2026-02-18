@@ -7,8 +7,16 @@ const antos_kernel = @import("kmod");
 const std = @import("std");
 const bootboot = @import("bootboot.zig");
 const io = @import("io.zig");
+
 const klog = std.log.scoped(.kernel);
-//const paging = @import("paging.zig");
+
+const paging = @import("mm/paging.zig");
+const bootmem = @import("mm/bootmem.zig");
+const pfmdb = @import("mm/pfmdb.zig");
+const pframe_alloc = @import("mm/pframe_alloc.zig");
+const vmm = @import("mm/vmm.zig");
+const heap = @import("mm/heap.zig");
+
 //const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
 pub const ANTSTATUS = antstatus.ANTSTATUS;
@@ -22,13 +30,10 @@ const logger = @import("logger.zig");
 const shell = @import("shell/shell.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
-const bootmem = @import("mm/bootmem.zig");
 const arch = @import("arch.zig");
 const kpcb = @import("kpcb.zig");
-const symbols = @import("debug/elf_symbols.zig");
 const ktest = @import("ktest.zig");
-const pfmdb = @import("mm/pfmdb.zig");
-const pframe_alloc = @import("mm/pframe_alloc.zig");
+const symbols = @import("debug/elf_symbols.zig");
 
 const fontEmbedded = @embedFile("font.psf");
 const QEMU_DEBUGCON = 0xe9;
@@ -95,6 +100,9 @@ export fn _start() callconv(.c) noreturn {
 
     pfmdb.init() catch unreachable;
     pframe_alloc.init() catch unreachable;
+    paging.init() catch unreachable;
+
+
 
     const earlyPageAlloc = pframe_alloc.allocator(&pframe_alloc.AllocContext{
         .map = pframe_alloc.defaultMapAssumeIdentity,
@@ -108,6 +116,10 @@ export fn _start() callconv(.c) noreturn {
     myarray.appendNTimes(earlyPageAlloc, 0xA, 12) catch unreachable;
 
     log.debug("{any}", .{myarray});
+
+    _ = vmm; 
+
+    heap.init(32) catch unreachable;
 
     pframe_alloc.dumpStats(logger.writer()) catch unreachable;
 

@@ -30,19 +30,25 @@ fn initPageFrame(
 
     if (!root) log.debug(
         "initalizing {s} page frame at PFN {d} with order {any}(max {any}), origin frame of {any}, tagged {s}.",
-        .{ if (root) "root" else "leaf", frame.pfn().?.raw(), order.raw(), max_order.raw(), origin.raw(), @tagName(tag),  },
+        .{
+            if (root) "root" else "leaf",
+            frame.pfn().?.raw(),
+            order.raw(),
+            max_order.raw(),
+            origin.raw(),
+            @tagName(tag),
+        },
     );
-
 
     frame.* = .{
         .info = .{
             .tag = tag,
             .order = order,
             .maximum_order = max_order,
-            .flags = .{ .root = root },
+            .flags = .{ .root = root, .isReserved = false },
         },
         .origin = origin,
-        .state = .not_present,
+        .node = .{}
     };
 }
 
@@ -67,7 +73,7 @@ pub fn splitFrameAssumeUnused(frame: *pfmdb.PageFrame, tok: pfmdb.WriteToken) !v
         frame.pfn().?.raw(),
         frame.info.order.raw(),
     });
-    std.debug.assert(frame.state != .not_present);
+    std.debug.assert(frame.getState() != .not_present);
 
     const order = frame.info.order.sub(1) orelse return error.PageFrame;
     const buddy = getBuddyOfPfnForOrder(frame.pfn().?, order) orelse return error.NoBuddyFrameFound;
@@ -87,22 +93,28 @@ pub fn splitFrameAssumeUnused(frame: *pfmdb.PageFrame, tok: pfmdb.WriteToken) !v
 }
 
 inline fn markUsed(frame: *pfmdb.PageFrame) void {
-    if (frame.state != .not_present) _ = totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic);
+    std.debug.assert(frame.info.refcount == 0);
+    if (frame.getState() == .free) _ = totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic);
     _ = totalUsedPages.fetchAdd(frame.info.order.totalPages(), .monotonic);
-    frame.state = .{ .used = .{} };
+    frame.info.active = true;
+    frame.info.refcount = 1;
 }
 
 inline fn markReserved(frame: *pfmdb.PageFrame) void {
-    if (frame.state != .not_present) _ = totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic);
+    if (frame.getState() == .free) _ = totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic);
     _ = totalReservedPages.fetchAdd(frame.info.order.totalPages(), .monotonic);
-    frame.state = .reserved;
+    frame.info.active = true;
+    frame.info.refcount = 1;
+    frame.info.tag = .static;
 }
 
 inline fn markFreeWithFreelist(frame: *pfmdb.PageFrame) void {
-    if (frame.state != .not_present)  _ = totalUsedPages.fetchSub(frame.info.order.totalPages(), .monotonic);
+    if (frame.getState() == .used) _ = totalUsedPages.fetchSub(frame.info.order.totalPages(), .monotonic);
     _ = totalFreePages.fetchAdd(frame.info.order.totalPages(), .monotonic);
-    frame.state = .{ .free = .{} };
-    getGlobalFreelistForOrder(frame.info.order).?.append(&frame.state.free);
+    if (frame.info.refcount > 0) frame.info.refcount -= 1;
+    std.debug.assert(frame.info.refcount == 0);
+    frame.node = .{};
+    getGlobalFreelistForOrder(frame.info.order).?.append(&frame.node);
 }
 
 fn initalizeRegionRoots(
@@ -166,7 +178,7 @@ pub fn lockAndAllocAny(pages: u32) !pfmdb.Pfn {
     defer tok.release();
 
     return allocAny(pages, tok);
-} 
+}
 
 pub fn allocExactOrder(order: mm.Order, tok: pfmdb.WriteToken) !pfmdb.Pfn {
     if (!order.isValid()) return error.InvalidOrder;
@@ -175,7 +187,7 @@ pub fn allocExactOrder(order: mm.Order, tok: pfmdb.WriteToken) !pfmdb.Pfn {
 
     const frame = frameFormFreelistNode(freelist.pop() orelse return error.AllocFailed, tok);
 
-    std.debug.assert(frame.state == .free);
+    std.debug.assert(frame.getState() == .free);
     std.debug.assert(frame.info.order == order);
 
     try markUsedViaPfnAndToken(frame.pfn().?, tok);
@@ -212,7 +224,7 @@ pub fn lockAndAllocOrder(order: mm.Order) !pfmdb.Pfn {
 pub fn markUsedViaPfnAndToken(pfn: pfmdb.Pfn, tok: pfmdb.WriteToken) !void {
     const frame = pfn.frameMut(tok) orelse return error.InvalidPfn;
 
-    assert(frame.state == .free);
+    assert(frame.getState() == .free);
 
     markUsed(frame);
 }
@@ -224,13 +236,13 @@ pub fn getParentOfPfnForOrder(frame: pfmdb.Pfn, order: mm.Order) ?pfmdb.Pfn {
 
 pub fn invalidateFrameByPfn(pfn: pfmdb.Pfn, tok: pfmdb.WriteToken) void {
     const frame = pfn.frameMut(tok).?;
-    _ = switch (frame.state) {
+    _ = switch (frame.getState()) {
         .free => totalFreePages.fetchSub(frame.info.order.totalPages(), .monotonic),
         .reserved => totalReservedPages.fetchSub(frame.info.order.totalPages(), .monotonic),
         .used => totalUsedPages.fetchSub(frame.info.order.totalPages(), .monotonic),
         else => 0,
     };
-    frame.state = .not_present;
+    frame.info.active = false;
 }
 
 pub inline fn lockAndFree(pfn: pfmdb.Pfn) !void {
@@ -276,10 +288,9 @@ pub fn freeWithMergeLimit(pfn: pfmdb.Pfn, tok: pfmdb.WriteToken, limit: Limit) !
 
             const buddy = frame.pfn().?.buddyForOrder(old_order).?.frameMut(tok) orelse break;
 
-            if (buddy.state != .free) break;
+            if (buddy.getState() != .free) break;
 
             assert(buddy.info.maximum_order == frame.info.maximum_order);
-            assert(buddy.state != .not_present);
             assert(buddy.root() == frame.root());
             assert(frame.info.order == old_order);
             assert(buddy.info.order == old_order);
@@ -318,18 +329,17 @@ pub fn lockAndFreeNoError(pfn: pfmdb.Pfn) void {
 
 fn frameFormFreelistNode(node: *std.DoublyLinkedList.Node, tok: pfmdb.WriteToken) *pfmdb.PageFrame {
     _ = tok;
-    const state: *pfmdb.PageFrame.State = @fieldParentPtr("free", node);
-    return @fieldParentPtr("state", state);
+    return @fieldParentPtr("node", node);
 }
 
-pub fn dumpStats(w: *std.Io.Writer)!void {
+pub fn dumpStats(w: *std.Io.Writer) !void {
     const total = bootldr.totalPhysicalPagesWithHoles();
     try w.writeAll("\r\nPHYSICAL FRAME ALLOCATOR STATE:\r\n");
     try w.print("(stats are in 4KiB pages)\r\n", .{});
     try w.print("Total Physical Pages: {d}\r\n", .{total});
-    try w.print("Free: {d}/{d}\r\n", .{totalFreePages.load(.monotonic), total});
-    try w.print("Used: {d}/{d}\r\n", .{totalUsedPages.load(.monotonic), total});
-    try w.print("Reserved: {d}/{d}\r\n", .{totalReservedPages.load(.monotonic), total});
+    try w.print("Free: {d}/{d}\r\n", .{ totalFreePages.load(.monotonic), total });
+    try w.print("Used: {d}/{d}\r\n", .{ totalUsedPages.load(.monotonic), total });
+    try w.print("Reserved: {d}/{d}\r\n", .{ totalReservedPages.load(.monotonic), total });
     try w.print("(PFMDB located at 0x{x})\r\n", .{pfmdb.baseAddress()});
 }
 
@@ -352,6 +362,7 @@ pub fn init() !void {
 
         if (!ent.isFree()) {
             _ = totalReservedPages.fetchAdd(@intCast(ent.getSizeIn4KiBPages()), .monotonic);
+            continue;
         }
 
         std.debug.assert(mm.PAGE_ALIGN.check(ent.getPtr()));
@@ -399,7 +410,7 @@ pub fn init() !void {
 
 pub const AllocContext = struct {
     map: *const fn (pfn: pfmdb.Pfn) ?[]u8,
-    translate: *const fn(addr: usize) ?pfmdb.Pfn,
+    translate: *const fn (addr: usize) ?pfmdb.Pfn,
 };
 
 pub fn defaultMapAssumeIdentity(pfn: pfmdb.Pfn) ?[]u8 {
@@ -441,7 +452,7 @@ fn vt_resize(rawCtx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new
     return new_size <= (frame.info.order.totalPages() * mm.PAGE_SIZE);
 }
 
-fn vt_alloc(rawCtx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8{
+fn vt_alloc(rawCtx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
     _ = ret_addr;
 
     const context: *const AllocContext = @ptrCast(@alignCast(rawCtx));
@@ -449,7 +460,7 @@ fn vt_alloc(rawCtx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_ad
     const size = alignment.forward(len);
     const pages: u32 = @truncate(mm.PAGE_ALIGN.forward(size) >> mm.PAGE_SHIFT);
 
-    const pfn =  lockAndAllocAny(pages) catch |e| {
+    const pfn = lockAndAllocAny(pages) catch |e| {
         log.warn("vtable allocation failed with error: {s}", .{@errorName(e)});
         return null;
     };
@@ -470,4 +481,3 @@ fn vt_free(rawCtx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_a
 
     lockAndFreeNoError(pfn);
 }
-

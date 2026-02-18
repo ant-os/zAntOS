@@ -99,7 +99,7 @@ test current {
     );
 }
 
-test "fsbase" {
+test "gsbase" {
     const addr = @intFromPtr(current());
     try ktest.expectEqual(arch.Msr.read(.gs_base), addr);
     try ktest.expectEqual(arch.Msr.read(.kernel_gs_base), addr);

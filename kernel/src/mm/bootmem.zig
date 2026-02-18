@@ -69,7 +69,7 @@ pub fn init() !void {
     if (largest_region_size == 0 or largest_region == 0)
         return error.NotEnoughtPhysicalMemory;
 
-    log.info("using physical region at 0x{x} with size of {d} bytes.", .{ largest_region, largest_region_size / 32 });
+    log.info("using physical region at 0x{x} with size of {d} bytes.", .{ largest_region, largest_region_size });
 
     const base_ptr: [*]u8 = @ptrFromInt(largest_region);
 
