@@ -8,7 +8,7 @@ const std = @import("std");
 const bootmem = @import("mm/bootmem.zig");
 const arch = @import("arch.zig");
 const builtin = @import("builtin");
-const InterruptFrame = @import("idt.zig").StackFrame(u64);
+const interrupts = @import("interrupts.zig");
 
 const KPCB = @This();
 
@@ -24,8 +24,10 @@ testdummy: if (builtin.is_test) u32 else void,
 debug_interrupt_count: u8,
 exception_depth: u8,
 interrupt_depth: u8,
-last_interrupt_frame: InterruptFrame,
+last_interrupt_frame: interrupts.TrapFrame,
 last_interrupt_handeled: bool,
+interrupt_routes: [0xE0]interrupts.InterruptRoute,
+local_vector_state: std.bit_set.IntegerBitSet(256) = .initFull(),
 
 // END PER CPU STATE //
 
@@ -79,7 +81,7 @@ const ktest = @import("ktest.zig");
 
 test "current2" {
     std.debug.assert(@intFromPtr(current()) == @intFromPtr(bsp));
-} 
+}
 
 test "local update" {
     local.testdummy = 0xdeadbeef;

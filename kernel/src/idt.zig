@@ -9,6 +9,10 @@ const stacktrace = @import("debug/stacktrace.zig");
 const logger = @import("logger.zig");
 const kpcb = @import("kpcb.zig");
 const ktest = @import("ktest.zig");
+const interrupts = @import("interrupts.zig");
+
+const SavedRegisters = interrupts.SavedRegisters;
+const Exception = interrupts.Exception;
 
 export var IDT: [256]GateDescriptor = std.mem.zeroes([256]GateDescriptor);
 
@@ -16,95 +20,9 @@ pub inline fn nth_entry(n: u8) *GateDescriptor {
     return &IDT[n];
 }
 
-pub const Exception = enum(u8) {
-    devide_error = 0,
-    debug_exception = 1,
-    nmi_interrupt = 2,
-    breakpoint = 3,
-    overflow = 4,
-    out_of_range = 5,
-    invalid_opcode = 6,
-    device_not_available = 7,
-    double_fault = 8,
-    invalid_tss = 10,
-    segment_not_present = 11,
-    stack_segment_fault = 12,
-    general_protection_fault = 13,
-    page_fault = 14,
-    fpu_math_fault = 16,
-    alignment_check = 17,
-    machine_check = 18,
-    simd_exception = 19,
-    virtualization_exception = 20,
-    control_protection_exception = 21,
-    _,
 
-    pub fn error_code(self: Exception) bool {
-        return switch (self) {
-            .double_fault,
-            .invalid_tss,
-            .segment_not_present,
-            .general_protection_fault,
-            .page_fault,
-            .control_protection_exception,
-            => true,
-            else => false,
-        };
-    }
-};
-
-pub const SavedRegisters = extern struct {
-    r15: u64,
-    r14: u64,
-    r13: u64,
-    r12: u64,
-    r11: u64,
-    r10: u64,
-    r9: u64,
-    r8: u64,
-    rdi: u64,
-    rsi: u64,
-    rbp: u64,
-    rdx: u64,
-    rcx: u64,
-    rbx: u64,
-    rax: u64,
-};
-
-const InterruptVector = u8;
-
-pub fn StackFrame(ErrorCode: type) type {
-    if (@sizeOf(ErrorCode) > 8) @compileError(std.fmt.comptimePrint(
-        "interrupt error code must be at most 8 bytes but is {d} bytes",
-        .{@sizeOf(ErrorCode)},
-    ));
-
-    return extern struct {
-        cr4: u64,
-        cr3: u64,
-        cr2: u64,
-        cr0: u64,
-        registers: SavedRegisters align(8),
-        vector: extern union {
-            raw: u8,
-            exception: Exception,
-        } align(8),
-        error_code: ErrorCode align(8),
-        rip: usize,
-        cs: segmentation.Selector align(8),
-        eflags: u64, // TODO: Typed EFLAGS.
-        rsp: usize,
-        ss: segmentation.Selector align(8),
-
-        pub fn is_reasonable(self: *@This()) bool {
-            _ = self;
-            return true;
-        }
-    };
-}
 
 const IsrStub = *const fn () callconv(.naked) void;
-const InterruptHandler = *const fn (*StackFrame(u64)) callconv(.{ .x86_64_sysv = .{} }) void;
 
 comptime {
     var push: []const u8 = "\n";
@@ -131,7 +49,7 @@ comptime {
         \\pushq %rax
         // if from usermode we swapgs
     ++ std.fmt.comptimePrint("\ntestb $1, {d}(%rsp)\n", .{
-        @offsetOf(StackFrame(u64), "cs"),
+        @offsetOf(interrupts.TrapFrame, "cs"),
     }) ++
         \\jz 1f
         \\swapgs
@@ -141,7 +59,7 @@ comptime {
         \\1: cld
     ++ std.fmt.comptimePrint(
         "\nmovq {d}(%rsp), %rdx\n",
-        .{@offsetOf(StackFrame(u64), "vector")},
+        .{@offsetOf(interrupts.TrapFrame, "vector")},
     ) ++
         \\movq %rsp, %rdi
         \\callq __handle_interrupt
@@ -151,7 +69,7 @@ comptime {
         \\__isr_return:
         // if orginally from usermode we swapgs again
     ++ std.fmt.comptimePrint("\ntestb $1, {d}(%rsp)\n", .{
-        @offsetOf(StackFrame(u64), "cs"),
+        @offsetOf(interrupts.TrapFrame, "cs"),
     }) ++
         \\jz 2f
         \\swapgs
@@ -221,7 +139,6 @@ pub fn init() void {
             .selector = .kernel_code,
             .present = true,
         };
-        // std.log.debug("IDT ENTRY: {any}", .{e});
     }
 
     const desc = descriptor.Descriptor(GateDescriptor){
@@ -234,59 +151,6 @@ pub fn init() void {
         :
         : [p] "*p" (&desc),
     );
-}
-
-noinline fn handle_exception(exception: Exception, frame: *StackFrame(u64)) !bool {
-    try logger.println("CPU exception: {s}", .{@tagName(exception)});
-    try logger.writeline("Stacktrace: ");
-    try stacktrace.captureAndWriteStackTraceForFrame(
-        logger.writer(),
-        frame.rip,
-        frame.registers.rbp,
-    );
-
-    if (exception == .breakpoint) return true;
-    return false;
-}
-
-const MAX_INTERRUPT_DEPTH = 8;
-const MAX_EXCEPTION_DEPTH = 8;
-
-export fn __handle_interrupt(frame: *StackFrame(u64)) callconv(.{ .x86_64_sysv = .{} }) void {
-    kpcb.local.debug_interrupt_count += 1;
-
-    if (frame.vector.raw < 32) {
-        if (kpcb.local.exception_depth >= MAX_EXCEPTION_DEPTH) arch.halt_cpu();
-        kpcb.local.exception_depth += 1;
-        logger.newline() catch {};
-        const handeled = handle_exception(
-            frame.vector.exception,
-            frame,
-        ) catch unreachable;
-
-        if (!handeled) arch.halt_cpu();
-
-        kpcb.local.last_interrupt_handeled = true;
-        kpcb.local.exception_depth -= 1;
-    } else {
-        if (kpcb.local.interrupt_depth >= MAX_INTERRUPT_DEPTH) arch.halt_cpu();
-        kpcb.local.interrupt_depth += 1;
-
-        logger.println("unhandeled interrupt 0x{x}!", .{frame.vector.raw}) catch unreachable;
-        logger.writeline("Stacktrace: ") catch unreachable;
-        stacktrace.captureAndWriteStackTraceForFrame(
-            logger.writer(),
-            frame.rip,
-            frame.registers.rbp,
-        ) catch unreachable;
-
-        kpcb.local.last_interrupt_handeled = false;
-        kpcb.local.interrupt_depth -= 1;
-    }
-
-    logger.println("info: trying to continue normally...", .{}) catch unreachable;
-
-    kpcb.current().last_interrupt_frame = frame.*;
 }
 
 pub const GateDescriptor = packed struct {

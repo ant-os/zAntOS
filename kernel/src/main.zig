@@ -17,6 +17,9 @@ const pframe_alloc = @import("mm/pframe_alloc.zig");
 const vmm = @import("mm/vmm.zig");
 const heap = @import("mm/heap.zig");
 
+const irql = @import("interrupts/irql.zig");
+const interrupts = @import("interrupts.zig");
+
 //const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
 pub const ANTSTATUS = antstatus.ANTSTATUS;
@@ -101,8 +104,7 @@ export fn _start() callconv(.c) noreturn {
     pfmdb.init() catch unreachable;
     pframe_alloc.init() catch unreachable;
     paging.init() catch unreachable;
-
-
+    interrupts.init() catch unreachable;
 
     const earlyPageAlloc = pframe_alloc.allocator(&pframe_alloc.AllocContext{
         .map = pframe_alloc.defaultMapAssumeIdentity,
@@ -117,16 +119,42 @@ export fn _start() callconv(.c) noreturn {
 
     log.debug("{any}", .{myarray});
 
-    _ = vmm; 
+    _ = vmm;
 
     heap.init(32) catch unreachable;
 
     pframe_alloc.dumpStats(logger.writer()) catch unreachable;
 
+    var mylock = irql.Lock.init;
+
+    log.debug("IRQL before block: {any}", .{irql.current()});
+
+    {
+        mylock.lock();
+        defer mylock.unlock();
+
+        // high-irql code
+        log.debug("IRQL in block: {any}", .{irql.current()});
+    }
+
+    log.debug("vector = 0x{x}", .{interrupts.connect(
+        &testcb,
+        null,
+        .dispatch,
+        .currentCpu(),
+    ) catch unreachable});
+
+    asm volatile ("int $0x20");
+
     if (@import("builtin").is_test) ktest.main() catch unreachable;
     logger.println("END", .{}) catch unreachable;
 
     arch.halt_cpu();
+}
+
+fn testcb(frame: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
+    logger.println("test callback invoked, frame = {any}", .{frame}) catch unreachable;
+    return true;
 }
 
 pub noinline fn software_int(comptime int: u8) void {
