@@ -157,6 +157,13 @@ pub fn walkPageTableForMapping(addr: u64) !?*TableEntry {
     return pe;
 }
 
+pub fn translateAddr(virtualAddr: u64) !u64 {
+    const page = mm.PAGE_ALIGN.backward(virtualAddr);
+    const offset: u12 = @truncate(virtualAddr);
+
+    return (try getPhysicalPage(page)) + offset; 
+}
+
 pub fn getPhysicalPage(virtualAddr: u64) !usize {
     if (!mm.PAGE_ALIGN.check(virtualAddr))
         return error.MisalignedVirtualPage;

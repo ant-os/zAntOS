@@ -26,8 +26,7 @@ exception_depth: u8,
 interrupt_depth: u8,
 last_interrupt_frame: interrupts.TrapFrame,
 last_interrupt_handeled: bool,
-interrupt_routes: [0xE0]interrupts.InterruptRoute,
-local_vector_state: std.bit_set.IntegerBitSet(256) = .initFull(),
+irq_router: interrupts.IrqRouter = .init,
 
 // END PER CPU STATE //
 

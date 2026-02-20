@@ -16,8 +16,8 @@ pub const Irql = enum(u4) {
     dev_6 = 0x9,
     dev_7 = 0xA,
     dev_8 = 0xB,
-    sync = 0xD,
-    clock = 0xC,
+    sync = 0xC,
+    clock = 0xD,
     ipi = 0xE,
     high = 0xF,
 

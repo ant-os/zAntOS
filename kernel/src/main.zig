@@ -17,6 +17,9 @@ const pframe_alloc = @import("mm/pframe_alloc.zig");
 const vmm = @import("mm/vmm.zig");
 const heap = @import("mm/heap.zig");
 
+const zuacpi_bind = @import("acpi/zuacpi.zig");
+const uacpi = @import("zuacpi").uacpi;
+
 const irql = @import("interrupts/irql.zig");
 const interrupts = @import("interrupts.zig");
 
@@ -136,15 +139,27 @@ export fn _start() callconv(.c) noreturn {
         // high-irql code
         log.debug("IRQL in block: {any}", .{irql.current()});
     }
+    log.debug("IRQL after block: {any}", .{irql.current()});
 
-    log.debug("vector = 0x{x}", .{interrupts.connect(
+    log.debug("irql = {any}", .{interrupts.connect(
         &testcb,
         null,
-        .dispatch,
+        .high,
         .currentCpu(),
     ) catch unreachable});
 
     asm volatile ("int $0x20");
+
+    var r: u64 = 0;
+    std.mem.doNotOptimizeAway(@import("acpi/shims.zig").uacpi_kernel_get_rsdp(&r));
+
+    const early_tlb_buffer = heap.allocator.alloc(u8, 0x2000) catch unreachable;
+
+    uacpi.setup_early_table_access(early_tlb_buffer) catch unreachable;
+
+    log.debug("FADT = {any}", .{uacpi.tables.table_fadt()});
+
+    log.info("trying to reset using uacpi", .{});
 
     if (@import("builtin").is_test) ktest.main() catch unreachable;
     logger.println("END", .{}) catch unreachable;
@@ -153,7 +168,9 @@ export fn _start() callconv(.c) noreturn {
 }
 
 fn testcb(frame: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
-    logger.println("test callback invoked, frame = {any}", .{frame}) catch unreachable;
+    klog.info("test callback invoked, frame = {any}", .{frame});
+    klog.info("triggering breakpoint", .{});
+    @breakpoint();
     return true;
 }
 

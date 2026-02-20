@@ -115,6 +115,10 @@ noinline fn handle_exception(exception: Exception, frame: *TrapFrame) !bool {
 const MAX_INTERRUPT_DEPTH = 8;
 const MAX_EXCEPTION_DEPTH = 8;
 
+pub noinline fn handle_localirq(frame: *TrapFrame) bool{
+    return kpcb.current().irq_router.doRouteVector(frame.vector.raw, frame);
+}
+
 export fn __handle_interrupt(frame: *TrapFrame) callconv(.{ .x86_64_sysv = .{} }) void {
     kpcb.local.debug_interrupt_count += 1;
 
@@ -135,18 +139,7 @@ export fn __handle_interrupt(frame: *TrapFrame) callconv(.{ .x86_64_sysv = .{} }
         if (kpcb.local.interrupt_depth >= MAX_INTERRUPT_DEPTH) arch.halt_cpu();
         kpcb.local.interrupt_depth += 1;
 
-        const route = &kpcb.current().interrupt_routes[frame.vector.raw - 0x20];
-
-        const handled = if (route.object) |dest| handle: {
-            if (dest.isr == null) break :handle false;
-            dest.lock.lockAt(dest.level);
-
-            const result = dest.isr.?(frame, dest.private);
-
-            dest.lock.unlock();
-
-            break :handle result;
-        } else false;
+        const handled = handle_localirq(frame);
 
         if (!handled) {
             logger.println("unhandeled interrupt 0x{x}!", .{frame.vector.raw}) catch unreachable;
@@ -188,10 +181,15 @@ pub const CpuMask = packed struct {
     }
 };
 
+pub const FancyInterruptVector = packed struct(u8) {
+    index: u4,
+    irql: irql.Irql,
+};
+
 pub const Isr = fn (frame: *TrapFrame, private: ?*anyopaque) callconv(.c) bool;
 pub const Interrupt = struct {
-    vector: u8,
     cpumask: CpuMask,
+    vector_hint: ?u8 = null,
 
     lock: irql.Lock,
     level: irql.Irql,
@@ -203,7 +201,7 @@ pub const Interrupt = struct {
     } = .none,
 };
 
-pub const InterruptRoute = struct {
+pub const IrqRoute = struct {
     object: ?*Interrupt,
 };
 
@@ -215,45 +213,89 @@ pub inline fn disable() void {
     asm volatile ("cli");
 }
 
-var global_vector_state: std.bit_set.IntegerBitSet(256) = .initFull();
+pub const IrqRouter = struct {
+    const USABLE_VECTOR_BASE = 31;
 
-pub fn allocateVector(local: bool) ?u8 {
-    var bitmap = if (local) &kpcb.current().local_vector_state else &global_vector_state;
-    const vector = bitmap.findFirstSet() orelse return null;
-    kpcb.current().local_vector_state.set(vector);
-    bitmap.unset(vector);
-    std.debug.assert(!global_vector_state.isSet(vector));
-    return @intCast(vector);
-}
+    const Bitset = std.bit_set.IntegerBitSet(0xF);
 
-pub fn connect(isr: *const Isr, private: ?*anyopaque, level: irql.Irql, cpumask: CpuMask) !u8 {
+    const full_bitset = Bitset.initEmpty();
+    const high_bitmap = blk: {
+        var set = full_bitset;
+        set.unset(0xF - 1);
+        break :blk set;
+    };
+
+    routes: [0xE0]?*Interrupt = .{ null } ** 0xE0,
+    vectors: [0xE]Bitset = blk: {
+        var sets: [0xE]Bitset = .{ Bitset.initFull() } ** 0xE;
+        // reserve the surpisous interrupt vector
+        sets[0xD].unset(0xE);
+        break :blk sets;
+    },
+
+    pub const init: IrqRouter = .{};
+
+    pub fn register(self: *IrqRouter, irq: *Interrupt) !void {
+        const level = irq.level;
+        if (level.raw() <= irql.Irql.async.raw()) return error.InvalidIrql;
+
+        const set = &self.vectors[level.raw() - 2];
+
+        const index = set.toggleFirstSet() orelse return error.NoMoreVectors;
+
+        const vector: u8 = @bitCast(FancyInterruptVector{
+            .irql = irq.level,
+            .index = @intCast(index),
+        });
+
+        if (self.routes[vector - USABLE_VECTOR_BASE] != null) return error.AlreadyInitalized;
+
+        irq.vector_hint = vector;
+
+        self.routes[vector - USABLE_VECTOR_BASE] = irq;
+    }
+
+    pub fn getIrqForVector(self: *const IrqRouter, vector: u8) ?*Interrupt {
+        return self.routes[vector - USABLE_VECTOR_BASE];
+    }
+
+    pub fn doRouteVector(self: *IrqRouter, vector: u8, frame: *TrapFrame) bool {
+        std.debug.assert(vector == frame.vector.raw);
+
+        const irq = self.getIrqForVector(frame.vector.raw) orelse return false;
+
+        if (irq.isr == null) return false;
+        irq.lock.lockAt(irq.level);
+
+        const result = irq.isr.?(frame, irq.private);
+
+        irq.lock.unlock();
+
+        return result;
+    } 
+};
+
+
+
+pub fn connect(isr: *const Isr, private: ?*anyopaque, level: irql.Irql, cpumask: CpuMask) !*Interrupt {
     if (cpumask.bitset.count() > 1) @panic("multicore interrupt not implemented yet");
 
-    const object = try heap.allocator.create(Interrupt);
-    const vector = allocateVector(false) orelse return error.OutOfVectors;
+    const irq = try heap.allocator.create(Interrupt);
 
-    object.* = .{
+    irq.* = .{
         .binding = .none,
         .cpumask = cpumask,
         .isr = isr,
         .level = level,
         .private = private,
-        .vector = vector,
         .lock = .init,
     };
 
-    kpcb.current().interrupt_routes[vector - 0x20].object = object;
+    try kpcb.current().irq_router.register(irq);
 
-    return vector;
+    return irq;
 }
 
 pub fn init() !void {
-    global_vector_state.setRangeValue(
-        .{ .start = 0, .end = 32 },
-        false,
-    );
-    kpcb.current().local_vector_state.setRangeValue(
-        .{ .start = 0, .end = 32 },
-        false,
-    );
+    
 }

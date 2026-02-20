@@ -1,0 +1,12 @@
+.{
+    .name = .kernel,
+    .version = "0.0.1",
+    .dependencies = .{
+        .zuacpi = .{
+            .path = "../../zuacpi",
+        },
+    },
+    .minimum_zig_version = "0.15.2",
+    .paths = .{ "src", "build.zig" },
+    .fingerprint = 0x5dd29aab2c12aa4a,
+}

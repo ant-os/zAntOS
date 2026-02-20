@@ -38,6 +38,17 @@ pub fn build(b: *std.Build) !void {
         .stack_check = true,
         .omit_frame_pointer = false,
     });
+
+    const zuacpi = b.dependency("zuacpi", .{
+        .log_level = .trace,
+        .override_arch_helpers = false,
+    });
+
+    const zuacpi_module = zuacpi.module("zuacpi");
+    zuacpi_module.addImport("kmod", kmod);
+
+    kmod.addImport("zuacpi", zuacpi_module);
+
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_module = kmod,
@@ -65,23 +76,19 @@ pub fn build(b: *std.Build) !void {
     kernel.stack_size = 0x1000;
 
     // kernel.strip = true;
-    b.verbose = true;
-    b.verbose_link = true;
+ 
     //try kernel.force_undefined_symbols.put("bootboot", undefined);
 
     b.installArtifact(kernel);
 
-    b.verbose_cc = true;
-    b.verbose_air = true;
-    
+
     const ktest = b.addTest(.{
         .name = "ktest",
         .root_module = kmod,
         .use_lld = true,
         .use_llvm = true,
-        
-        .test_runner = .{
 
+        .test_runner = .{
             .mode = .simple,
             .path = b.path("src/test_main.zig"),
         },
