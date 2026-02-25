@@ -44,7 +44,7 @@ pub const Area = struct {
 
     pub noinline fn grow(self: *Area, pages: u32) !void {
         const newTop = self.top + (pages * mm.PAGE_SIZE);
-        var unmapped = pages;
+        var unmapped = pages + 1;
 
         if (newTop > self.end) return error.VmmOutOfSpace;
     

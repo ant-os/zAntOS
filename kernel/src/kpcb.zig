@@ -9,7 +9,7 @@ const bootmem = @import("mm/bootmem.zig");
 const arch = @import("arch.zig");
 const builtin = @import("builtin");
 const interrupts = @import("interrupts.zig");
-
+const Scheduler = @import("scheduler.zig");
 const KPCB = @This();
 
 pub const CANARY: u32 = @truncate(0x4B41504341459);
@@ -27,6 +27,8 @@ interrupt_depth: u8,
 last_interrupt_frame: interrupts.TrapFrame,
 last_interrupt_handeled: bool,
 irq_router: interrupts.IrqRouter = .init,
+
+scheduler: Scheduler,
 
 // END PER CPU STATE //
 

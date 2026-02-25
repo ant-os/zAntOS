@@ -26,7 +26,7 @@ pub const Irql = enum(u4) {
     }
 
     pub fn assertLessOrEqual(self: Irql, irql: Irql) void {
-        if (irql.raw() > self.raw()) @panic("irql not less or equal");
+        if (self.raw() > irql.raw()) @panic("irql not less or equal");
     }
 
     pub fn assertHigherOrEqual(self: Irql, irql: Irql) void {
@@ -86,6 +86,10 @@ pub const Lock = struct {
     pub fn lockAt(self: *Lock, irql: Irql) void {
         self.old_irql = raise(irql);
         self.spinlock.lock();
+    }
+
+    pub fn isLocked(self: *Lock) bool {
+        return self.spinlock.isLocked();
     }
 
     pub fn lock(self: *Lock) void {

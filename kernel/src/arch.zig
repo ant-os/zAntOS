@@ -2,6 +2,8 @@ const std = @import("std");
 const bootboot = @import("bootboot.zig");
 
 pub const MAX_SUPPORTED_CORES = 8;
+pub const cc = std.builtin.CallingConvention{ .x86_64_sysv = .{} };
+
 
 pub fn halt_cpu() noreturn {
     while (true) {

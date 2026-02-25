@@ -191,7 +191,7 @@ pub fn allocExactOrder(order: mm.Order, tok: pfmdb.WriteToken) !pfmdb.Pfn {
     std.debug.assert(frame.info.order == order);
 
     try markUsedViaPfnAndToken(frame.pfn().?, tok);
-
+    
     return frame.pfn() orelse return error.InvalidPfn;
 }
 
@@ -299,6 +299,8 @@ pub fn freeWithMergeLimit(pfn: pfmdb.Pfn, tok: pfmdb.WriteToken, limit: Limit) !
                 frame.pfn().?.raw(),
                 new_order.raw().?,
             });
+
+            getGlobalFreelistForOrder(old_order).?.remove(&buddy.node);
 
             // get the "parent", e.g. the node that was split (min(frame, buddy)).
             const parent = getParentOfPfnForOrder(

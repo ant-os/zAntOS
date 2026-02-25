@@ -306,20 +306,16 @@ fn remap(
 fn grow(pages: usize) !void {
     try vma.grow(@intCast(pages));
 
-    if (lastSegment != null) {
-        lastSegment.?.size += pages * 0x1000;
-    } else { // create a new last segment
-        const newSeg: *SegmentHeader = @ptrFromInt(HEAP_BASE + (totalPages * 0x1000));
+    const newSeg: *SegmentHeader = @ptrFromInt(HEAP_BASE + (totalPages * 0x1000));
 
-        newSeg.* = .{
-            .next = null,
-            .prev = lastSegment,
-            .size = (pages * 0x1000) - @sizeOf(SegmentHeader),
-            .free = true,
-        };
+    newSeg.* = .{
+        .next = null,
+        .prev = lastSegment,
+        .size = (pages * 0x1000) - @sizeOf(SegmentHeader),
+        .free = true,
+    };
 
-        lastSegment = newSeg;
-    }
+    lastSegment = newSeg;
 
     totalPages += pages;
 }

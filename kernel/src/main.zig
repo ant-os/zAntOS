@@ -23,6 +23,8 @@ const uacpi = @import("zuacpi").uacpi;
 const irql = @import("interrupts/irql.zig");
 const interrupts = @import("interrupts.zig");
 
+const Scheduler = @import("scheduler.zig");
+
 //const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
 pub const ANTSTATUS = antstatus.ANTSTATUS;
@@ -144,7 +146,7 @@ export fn _start() callconv(.c) noreturn {
     log.debug("irql = {any}", .{interrupts.connect(
         &testcb,
         null,
-        .high,
+        .dispatch,
         .currentCpu(),
     ) catch unreachable});
 
@@ -159,7 +161,31 @@ export fn _start() callconv(.c) noreturn {
 
     log.debug("FADT = {any}", .{uacpi.tables.table_fadt()});
 
-    log.info("trying to reset using uacpi", .{});
+    kpcb.current().scheduler.init() catch unreachable;
+
+    log.info("trying to create thread", .{});
+
+    const thread = Scheduler.Thread.init(
+        heap.allocator,
+        &mythreadfunc,
+        null,
+        0x2000,
+    ) catch unreachable;
+
+    const thread2 = Scheduler.Thread.init(
+        heap.allocator,
+        &mythreadfunc,
+        null,
+        0x2000,
+    ) catch unreachable;
+
+    klog.debug("first tid = {any}", .{thread.id});
+    klog.debug("second tid = {any}", .{thread2.id});
+
+    kpcb.current().scheduler.queueThread(thread);
+    kpcb.current().scheduler.queueThread(thread2);
+
+    Scheduler.yield();
 
     if (@import("builtin").is_test) ktest.main() catch unreachable;
     logger.println("END", .{}) catch unreachable;
@@ -167,10 +193,23 @@ export fn _start() callconv(.c) noreturn {
     arch.halt_cpu();
 }
 
-fn testcb(frame: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
-    klog.info("test callback invoked, frame = {any}", .{frame});
-    klog.info("triggering breakpoint", .{});
+export fn mythreadfunc(ctx: ?*anyopaque) callconv(arch.cc) noreturn {
+    _ = ctx;
+    klog.info("now we are a real thread!", .{});
+
+    klog.debug("current thread id is {any}", .{kpcb.local.scheduler.current_thread.?.id});
+
     @breakpoint();
+
+    Scheduler.yield();
+
+    klog.info("now we are back after yield()...", .{});
+
+    arch.halt_cpu();
+}
+
+fn testcb(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
+    klog.info("test irq callback invoked...", .{});
     return true;
 }
 

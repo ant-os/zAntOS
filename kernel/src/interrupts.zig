@@ -115,31 +115,30 @@ noinline fn handle_exception(exception: Exception, frame: *TrapFrame) !bool {
 const MAX_INTERRUPT_DEPTH = 8;
 const MAX_EXCEPTION_DEPTH = 8;
 
-pub noinline fn handle_localirq(frame: *TrapFrame) bool{
+pub noinline fn handle_localirq(frame: *TrapFrame) bool {
     return kpcb.current().irq_router.doRouteVector(frame.vector.raw, frame);
 }
 
 export fn __handle_interrupt(frame: *TrapFrame) callconv(.{ .x86_64_sysv = .{} }) void {
     kpcb.local.debug_interrupt_count += 1;
 
-    if (frame.vector.raw < 32) {
+    var handled: bool = false;
+    const isException = frame.vector.raw < 32;
+
+    if (isException) {
         if (kpcb.local.exception_depth >= MAX_EXCEPTION_DEPTH) arch.halt_cpu();
         kpcb.local.exception_depth += 1;
         logger.newline() catch {};
-        const handeled = handle_exception(
+        handled = handle_exception(
             frame.vector.exception,
             frame,
         ) catch unreachable;
 
-        if (!handeled) arch.halt_cpu();
-
-        kpcb.local.last_interrupt_handeled = true;
-        kpcb.local.exception_depth -= 1;
     } else {
         if (kpcb.local.interrupt_depth >= MAX_INTERRUPT_DEPTH) arch.halt_cpu();
         kpcb.local.interrupt_depth += 1;
 
-        const handled = handle_localirq(frame);
+        handled = handle_localirq(frame);
 
         if (!handled) {
             logger.println("unhandeled interrupt 0x{x}!", .{frame.vector.raw}) catch unreachable;
@@ -150,14 +149,23 @@ export fn __handle_interrupt(frame: *TrapFrame) callconv(.{ .x86_64_sysv = .{} }
                 frame.registers.rbp,
             ) catch unreachable;
         }
-
-        kpcb.local.last_interrupt_handeled = handled;
-        kpcb.local.interrupt_depth -= 1;
     }
+
+    if (!handled and isException) arch.halt_cpu();
+
+    const original_frame: TrapFrame = frame.*;
+
+    if (irql.current().raw() <= irql.Irql.dispatch.raw() and kpcb.local.interrupt_depth == 1) {
+        logger.println("running scheduler... frame = {any}", .{frame}) catch unreachable;
+        kpcb.current().scheduler.schedule(frame);
+    }
+
+    kpcb.local.last_interrupt_handeled = handled;
+    if (isException) kpcb.local.exception_depth -= 1 else kpcb.local.interrupt_depth -= 1;
 
     logger.println("info: trying to continue normally...", .{}) catch unreachable;
 
-    kpcb.current().last_interrupt_frame = frame.*;
+    kpcb.current().last_interrupt_frame = original_frame;
 }
 
 pub const CpuMask = packed struct {
@@ -225,9 +233,9 @@ pub const IrqRouter = struct {
         break :blk set;
     };
 
-    routes: [0xE0]?*Interrupt = .{ null } ** 0xE0,
+    routes: [0xE0]?*Interrupt = .{null} ** 0xE0,
     vectors: [0xE]Bitset = blk: {
-        var sets: [0xE]Bitset = .{ Bitset.initFull() } ** 0xE;
+        var sets: [0xE]Bitset = .{Bitset.initFull()} ** 0xE;
         // reserve the surpisous interrupt vector
         sets[0xD].unset(0xE);
         break :blk sets;
@@ -272,10 +280,8 @@ pub const IrqRouter = struct {
         irq.lock.unlock();
 
         return result;
-    } 
+    }
 };
-
-
 
 pub fn connect(isr: *const Isr, private: ?*anyopaque, level: irql.Irql, cpumask: CpuMask) !*Interrupt {
     if (cpumask.bitset.count() > 1) @panic("multicore interrupt not implemented yet");
@@ -296,6 +302,4 @@ pub fn connect(isr: *const Isr, private: ?*anyopaque, level: irql.Irql, cpumask:
     return irq;
 }
 
-pub fn init() !void {
-    
-}
+pub fn init() !void {}

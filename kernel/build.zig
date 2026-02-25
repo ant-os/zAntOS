@@ -73,7 +73,6 @@ pub fn build(b: *std.Build) !void {
     //  kernel.setLinkerScript(b.path("src/link.ld"))
 
     kernel.linker_script = b.path("src/link.ld");
-    kernel.stack_size = 0x1000;
 
     // kernel.strip = true;
  
