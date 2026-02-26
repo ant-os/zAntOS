@@ -25,6 +25,8 @@ const interrupts = @import("interrupts.zig");
 
 const Scheduler = @import("scheduler.zig");
 
+const apic = @import("apic.zig");
+
 //const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
 pub const ANTSTATUS = antstatus.ANTSTATUS;
@@ -150,6 +152,7 @@ export fn _start() callconv(.c) noreturn {
         .currentCpu(),
     ) catch unreachable});
 
+
     asm volatile ("int $0x20");
 
     var r: u64 = 0;
@@ -162,18 +165,19 @@ export fn _start() callconv(.c) noreturn {
     log.debug("FADT = {any}", .{uacpi.tables.table_fadt()});
 
     kpcb.current().scheduler.init() catch unreachable;
+    apic.init() catch unreachable;
+
+    arch.halt_cpu();
 
     log.info("trying to create thread", .{});
 
     const thread = Scheduler.Thread.init(
-        heap.allocator,
         &mythreadfunc,
         null,
         0x2000,
     ) catch unreachable;
 
     const thread2 = Scheduler.Thread.init(
-        heap.allocator,
         &mythreadfunc,
         null,
         0x2000,

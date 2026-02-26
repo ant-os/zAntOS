@@ -1,7 +1,7 @@
 const std = @import("std");
 const bootboot = @import("bootboot.zig");
 
-pub const MAX_SUPPORTED_CORES = 8;
+pub const MAX_SUPPORTED_CORES = 255;
 pub const cc = std.builtin.CallingConvention{ .x86_64_sysv = .{} };
 
 

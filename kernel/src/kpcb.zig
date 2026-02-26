@@ -10,6 +10,7 @@ const arch = @import("arch.zig");
 const builtin = @import("builtin");
 const interrupts = @import("interrupts.zig");
 const Scheduler = @import("scheduler.zig");
+const LocalApic = @import("apic/lapic.zig");
 const KPCB = @This();
 
 pub const CANARY: u32 = @truncate(0x4B41504341459);
@@ -20,6 +21,7 @@ self: *KPCB = undefined,
 
 canary: u32 = CANARY,
 testdummy: if (builtin.is_test) u32 else void,
+lapic_index: u8,
 
 debug_interrupt_count: u8,
 exception_depth: u8,
@@ -32,7 +34,7 @@ scheduler: Scheduler,
 
 // END PER CPU STATE //
 
-var cpu_cores: [arch.MAX_SUPPORTED_CORES]?*KPCB = .{null} ** arch.MAX_SUPPORTED_CORES;
+pub var cpu_cores: [arch.MAX_SUPPORTED_CORES]?*KPCB = .{null} ** arch.MAX_SUPPORTED_CORES;
 pub const local: (*allowzero addrspace(.gs) KPCB) = @ptrFromInt(0x0);
 pub var bsp: *KPCB = undefined;
 
@@ -44,7 +46,7 @@ pub inline fn currentViaLookup() *KPCB {
 /// get the current KPCB via the .self pointer (very fast), useful to get a non-addrspace(.gs) pointer.
 pub noinline fn current() *KPCB {
     return local.self;
-}
+}  
 
 pub noinline fn early_init() !void {
     const log = std.log.scoped(.processor_init);

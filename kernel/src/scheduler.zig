@@ -78,7 +78,6 @@ pub fn queueThread(self: *Scheduler, thread: *Thread) void {
 
 pub fn init(self: *Scheduler) !void {
     const idle = Scheduler.Thread.init(
-        heap.allocator,
         &__thread_idle,
         null,
         0x2000,

@@ -2,3 +2,5 @@ kernel/.zig-cache/*
 build
 *.local
 *.zig-cache
+kernel/zig-pkg
+output/docs

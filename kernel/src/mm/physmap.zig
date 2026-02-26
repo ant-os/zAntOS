@@ -6,7 +6,7 @@ pub fn setBase(new_base: u64) void {
     base = new_base;
 }
 
-pub fn getPtr(comptime T: type, addr: u64) *T {
+pub fn getPtr(comptime T: type, addr: u64) *volatile T {
     return @ptrFromInt(base + addr);
 }
 

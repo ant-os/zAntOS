@@ -1,8 +1,6 @@
 const io = @import("io.zig");
 const std = @import("std");
 
-const klog = std.log.scoped(.early_serial);
-
 const CLOCK_FREQ = 115200;
 
 pub const COM1: u16 = 0x3f8;
