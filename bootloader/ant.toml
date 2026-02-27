@@ -1,0 +1,16 @@
+version = "0.0.1-antinstall"
+
+[loader]
+name = "antboot"
+verbose = true
+version = "2.0.0-indev"
+
+[system]
+osname = "zAntOS"
+version = "0.0.1-antboot"
+
+[kernel]
+image-path="AntOsKrnl.bin"
+
+[kernel.parameters]
+example = "abc"
