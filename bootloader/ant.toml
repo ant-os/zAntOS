@@ -10,7 +10,8 @@ osname = "zAntOS"
 version = "0.0.1-antboot"
 
 [kernel]
-image-path="AntOsKrnl.bin"
+image-path="$SYSTEMROOT$/kernel.elf"
 
 [kernel.parameters]
 example = "abc"
+
