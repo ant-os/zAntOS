@@ -1,0 +1,19 @@
+.{
+    .name = .zAntOS,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .bootloader = .{
+            .path = "bootloader",
+        },
+        .kernel = .{
+            .path = "loadertest",
+        },
+        .dimmer = .{
+            .url = "git+https://github.com/zig-osdev/disk-image-step.git#d880d0295f0794c8f32bff9ae31a787251f3d735",
+            .hash = "dimmer-2.0.0-suxOkt5YAgByHMauaN7sztqur48X_-gw0y4JDuY1HG8k",
+        },
+    },
+    .paths = .{"."},
+    .fingerprint = 0x736aedc5e18e092c,
+}

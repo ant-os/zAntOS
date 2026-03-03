@@ -8,7 +8,7 @@ const EfiFile = uefi.protocol.File;
 var logBuffer: [8 * 0x1000]u8 = undefined;
 
 pub const version_string = "2.0.0-indev";
-const ParsedInstallConfig = toml.Parsed(InstallConfig);
+const ParsedBootConfig = toml.Parsed(BootConfig);
 
 const toWideStringComptime = std.unicode.utf8ToUtf16LeStringLiteral;
 pub fn toWideString(buf: []const u8, alloc: std.mem.Allocator) ![*:0]const u16 {
@@ -16,11 +16,11 @@ pub fn toWideString(buf: []const u8, alloc: std.mem.Allocator) ![*:0]const u16 {
     return (try std.unicode.utf8ToUtf16LeAllocZ(alloc, buf)).ptr;
 }
 
-pub fn detectOsInstallOnFilesystem(fs: *uefi.protocol.SimpleFileSystem) !?ParsedInstallConfig {
+pub fn detectOsInstallOnFilesystem(fs: *uefi.protocol.SimpleFileSystem) !?ParsedBootConfig {
     const root = try fs.openVolume();
 
     const configfile = root.open(
-        comptime toWideString("\\AntOS\\config.toml", undefined) catch unreachable,
+        comptime toWideString("\\AntOS\\boot.toml", undefined) catch unreachable,
         .read,
         .{},
     ) catch |e| {
@@ -44,12 +44,12 @@ pub fn detectOsInstallOnFilesystem(fs: *uefi.protocol.SimpleFileSystem) !?Parsed
 
     _ = try configfile.read(fileContents);
 
-    var parser = toml.Parser(InstallConfig).init(uefi.pool_allocator);
+    var parser = toml.Parser(BootConfig).init(uefi.pool_allocator);
     defer parser.deinit();
 
     const config = try parser.parseString(fileContents);
 
-    if (!std.mem.eql(u8, config.value.version, InstallConfig.VERSION)) return error.MismatchedVersion;
+    if (!std.mem.eql(u8, config.value.version, BootConfig.VERSION)) return error.MismatchedVersion;
     if (!std.mem.eql(u8, config.value.loader.version, version_string)) return error.MismatchedLoaderVersion;
 
     return config;
@@ -75,14 +75,14 @@ pub fn convertPathToEfi(path: []const u8, alloc: std.mem.Allocator) ![*:0]const 
 }
 
 pub const OsInstallation = struct {
-    parsed_config: ParsedInstallConfig,
+    parsed_config: ParsedBootConfig,
     systemroot: *EfiFile,
 
     fn alloc(self: *OsInstallation) std.mem.Allocator {
         return self.parsed_config.arena.allocator();
     }
 
-    pub fn config(self: *const OsInstallation) *const InstallConfig {
+    pub fn config(self: *const OsInstallation) *const BootConfig {
         return &self.parsed_config.value;
     }
 
@@ -141,24 +141,7 @@ pub fn getFirstOsInstall() !OsInstallation {
     return error.NotFound;
 }
 
-const InstallConfig = struct {
-    pub const VERSION = "0.0.1-antinstall";
-
-    version: []const u8,
-    loader: struct {
-        name: []const u8,
-        version: []const u8,
-        verbose: bool,
-    },
-    system: struct {
-        osname: []const u8,
-        version: []const u8,
-    },
-    kernel: struct {
-        @"image-path": []const u8,
-        parameters: toml.Table,
-    },
-};
+const BootConfig = @import("InstallConfig.zig");
 
 pub fn _logFn(
     comptime level: std.log.Level,
@@ -630,6 +613,14 @@ pub fn main() uefi.Error!void {
         return errorCast(uefi.Error, e) orelse uefi.Error.Unexpected;
     };
 
+    var acpi_ptr: ?*anyopaque = null; 
+
+    for (uefi.system_table.configuration_table[0..uefi.system_table.number_of_table_entries]) |*cfgtlb| {
+        if (!cfgtlb.vendor_guid.eql(uefi.tables.ConfigurationTable.acpi_20_table_guid)) continue;
+
+        acpi_ptr = cfgtlb.vendor_table;
+    }
+
     // free all temporary allocations
     arena.deinit();
 
@@ -637,6 +628,7 @@ pub fn main() uefi.Error!void {
         (allocatePages(1, .loader_data) catch return error.OutOfResources).ptr,
     ));
 
+    log.debug("kernel handoff", .{});
     const info = try efiBootServices().getMemoryMapInfo();
     const mmapBuffer = uefi.pool_allocator.alignedAlloc(
         u8,
@@ -657,9 +649,10 @@ pub fn main() uefi.Error!void {
             .descriptor_size = mmap.info.descriptor_size,
             .descriptor_count = mmap.info.len,
         },
+        .acpi_ptr = acpi_ptr,
+        .efi_ptr = uefi.system_table,
     };
 
-    log.debug("kernel handoff", .{});
     try efiBootServices().exitBootServices(uefi.handle, mmap.info.key);
 
     // !! NO PRINT AFTER THIS POINT !! //
@@ -697,7 +690,7 @@ pub fn main() uefi.Error!void {
     unreachable;
 }
 
-const BootInfo = extern struct {
+pub const BootInfo = extern struct {
     const Memory = extern struct {
         descriptors: [*]const u8,
         descriptor_size: usize,
@@ -716,4 +709,7 @@ const BootInfo = extern struct {
 
     kernel_image: Image,
     memory: Memory,
+
+    acpi_ptr: ?*anyopaque,
+    efi_ptr: *uefi.tables.SystemTable,
 };

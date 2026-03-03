@@ -40,9 +40,7 @@
             .url = "https://github.com/sam701/zig-toml/archive/refs/heads/zig-0.15.tar.gz",
             .hash = "toml-0.3.0-bV14BfV7AQD8DkuQI7skP8ekQTaBYKTO0MY_35Cw_EXo",
         },
-        .loadertest = .{
-            .path = "../loadertest",
-        }
+     
     },
     .paths = .{
         "build.zig",

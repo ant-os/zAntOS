@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const loaderModule = b.addModule("antos-loader", .{
+    const loaderModule = b.addModule("loadermod", .{
         .root_source_file = b.path("src/main.zig"),
         .target = b.resolveTargetQuery(target),
         .optimize = optimize,
@@ -27,62 +27,9 @@ pub fn build(b: *std.Build) void {
     loaderModule.addImport("toml", tomlMod);
 
     const exe = b.addExecutable(.{
-        .name = "antboot2",
+        .name = "efi-osloader",
         .root_module = loaderModule,
     });
 
     b.installArtifact(exe);
-
-    var imgBuilder = ImageBuilder.init(b, b.dependencyFromBuildZig(dimmer, .{}));
-
-    var rootfs: ImageBuilder.FileSystemBuilder = .init(b);
-
-    rootfs.copyFile(exe.getEmittedBin(), "//EFI/BOOT/BOOTX64.EFI");
-    rootfs.copyFile(b.path("ant.toml"), "//AntOS/config.toml");
-
-    const loadertest = b.dependency("loadertest", .{});
-
-    const loadertestKernel = loadertest.artifact("kernel");
-
-    rootfs.copyFile(loadertestKernel.getEmittedBin(), "//AntOS/kernel.elf");
-
-    const imageContent: ImageBuilder.Content = .{
-        .gpt_part_table = .{
-            .partitions = &.{
-                ImageBuilder.GptPartTable.Partition{
-                    .type = .{ .name = .@"efi-system" },
-                    .name = "EFI System Partition",
-                    .offset = 0x5000,                   
-                    .data = .{
-                        .vfat = .{
-                            .format = .fat32,
-                            .label = "AntOS_ESP",
-                            .tree = rootfs.finalize(),
-                        },
-                    },
-                },
-            },
-        },
-    };
-
-    const image = imgBuilder.createDisk(33 * ImageBuilder.MiB, imageContent);
-
-    const copyOutputs = b.addUpdateSourceFiles();
-
-    copyOutputs.step.dependOn(&exe.step);
-    copyOutputs.step.dependOn(&loadertestKernel.step);
-    copyOutputs.addCopyFileToSource(image, "output/efi64.img");
-    copyOutputs.addCopyFileToSource(loadertestKernel.getEmittedBin(), "output/kernel");
-
-    const qemu = b.addSystemCommand(&.{"qemu-system-x86_64"});
-    qemu.addArg("-nographic");
-    qemu.addArgs(&.{"-bios", "/usr/share/ovmf/OVMF.fd"});
-    qemu.addArgs(&.{"-hda", "output/efi64.img"});
-    qemu.addArgs(&.{"-d", "cpu_reset"});
-    qemu.addArg("-no-reboot");
-    qemu.addArgs(&.{"-m", "2G"});
-    qemu.step.dependOn(&copyOutputs.step);
-
-    const run = b.step("run", "run the bootloader in qemu");
-    run.dependOn(&qemu.step);
 }

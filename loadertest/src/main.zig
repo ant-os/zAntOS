@@ -1,6 +1,6 @@
 const std = @import("std");
+const antboot = @import("bootloader");
 
-const LOADER_BLOCK = opaque {};
 const cc = std.builtin.CallingConvention{ .x86_64_sysv = .{} };
 
 pub inline fn inb(port: u16) u8 {
@@ -49,31 +49,19 @@ pub const DirectPortIO = struct {
         return .{ .context = self.port };
     }
 };
-const BootInfo = extern struct {
-    const Memory = extern struct {
-        descriptors: [*]const u8,
-        descriptor_size: usize,
-        descriptor_count: usize,
-    };
 
-    const Image = extern struct {
-        path: [*:0]const u8,
-        base: usize,
-        size: usize,
-    };
-
-    major_verion: usize = 1,
-    minor_verion: usize = 0,
-    size: usize,
-
-    kernel_image: Image,
-    memory: Memory,
-};
-
-export fn antkStartupSystem(info: *BootInfo) callconv(cc) noreturn {
+export fn antkStartupSystem(info: *antboot.BootInfo) callconv(cc) noreturn {
     const io = DirectPortIO.new(0x3f8);
-    io.writer().print("Hello, World!\r\n", .{}) catch unreachable;
+    io.writer().print("Hello from the test kernel!\r\n", .{}) catch unreachable;
     io.writer().print("Boot Info: {any}\r\n", .{info}) catch unreachable;
+
+    var buf: [256]u8 align(2) = .{0} ** 256;
+
+    const vendor = info.efi_ptr.firmware_vendor;
+
+    const end = std.unicode.utf16LeToUtf8(&buf, vendor[0..std.mem.len(vendor)]) catch 0;
+
+    io.writer().print("efi vendor: {s}\n", .{buf[0..end]}) catch {};
 
     while (true) {
         asm volatile ("hlt");

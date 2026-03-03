@@ -1,0 +1,6 @@
+#/usr/bin/env bash
+zig build "$@" -p build
+if [ $? -ne 0 ]; then
+   exit
+fi
+zig build run "$@" -p build

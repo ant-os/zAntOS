@@ -41,7 +41,9 @@ pub fn build(b: *std.Build) !void {
         .omit_frame_pointer = false,
     });
 
-    
+    const bootloaderDep = b.dependency("bootloader", .{});
+    const bootloader = bootloaderDep.module("loadermod");
+    kmod.addImport("bootloader", bootloader);
 
     const kernel = b.addExecutable(.{
         .name = "kernel",
