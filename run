@@ -1,0 +1,7 @@
+#/usr/bin/env bash
+mkdir -p build/systemroot
+zig build "$@" -p build
+if [ $? -ne 0 ]; then
+   exit
+fi
+zig build run "$@" -p build

@@ -71,6 +71,7 @@ pub const Area = struct {
             }
 
             unmapped -= order.totalPages();
+            self.top += (order.totalPages() * 0x1000);
         }
 
         self.top = newTop;

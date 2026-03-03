@@ -5,7 +5,6 @@
 const antos_kernel = @import("kmod");
 
 const std = @import("std");
-const bootboot = @import("bootboot.zig");
 const io = @import("io.zig");
 
 const klog = std.log.scoped(.kernel);
@@ -16,6 +15,8 @@ const pfmdb = @import("mm/pfmdb.zig");
 const pframe_alloc = @import("mm/pframe_alloc.zig");
 const vmm = @import("mm/vmm.zig");
 const heap = @import("mm/heap.zig");
+const antboot = @import("bootloader");
+const bootloader = @import("bootloader.zig");
 
 const zuacpi_bind = @import("acpi/zuacpi.zig");
 const uacpi = @import("zuacpi").uacpi;
@@ -76,8 +77,8 @@ pub noinline fn earlybug(comptime key: anytype) noreturn {
 
 pub const panic = @import("panic.zig").__zig_panic_impl;
 
-// Entry point, called by BOOTBOOT Loader
-export fn _start() callconv(.c) noreturn {
+// Entry point, called by Loader
+export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn {
     // @setRuntimeSafety(false);
     const log = std.log.scoped(.kernel_init);
     // On BSP if loader is valid:
@@ -88,10 +89,16 @@ export fn _start() callconv(.c) noreturn {
     // 5. initalize paging and update struct pointers.
     // Last: Start shell.
 
+
     logger.init() catch unreachable;
 
+    bootloader.info = info;
+
+    log.info("boot info: {any}", .{info});
+
+
     bootmem.init() catch |e| {
-        log.err("failed to initalize bootmem: {s}", .{@errorName(e)});
+        log.err("failed to initalize bootmem alloc: {s}", .{@errorName(e)});
         arch.halt_cpu();
     };
 
@@ -166,8 +173,6 @@ export fn _start() callconv(.c) noreturn {
 
     kpcb.current().scheduler.init() catch unreachable;
     apic.init() catch unreachable;
-
-    arch.halt_cpu();
 
     log.info("trying to create thread", .{});
 

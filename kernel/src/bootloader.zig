@@ -1,55 +1,43 @@
-const bootboot = @import("bootboot.zig");
 const std = @import("std");
+const loader = @import("bootloader");
+const uefi = std.os.uefi;
 
 var totalPhysicalPages: usize = 0;
+pub var info: *loader.BootInfo = undefined;
 
 pub export fn totalUsablePhysicalPages() usize {
-    if (totalPhysicalPages > 0)
-        return totalPhysicalPages
-    else {
-        @branchHint(.unlikely);
+    var total: usize = 0;
+    var iter = memoryDescriptorIter();
+    while (iter.next()) |desc| {
+        if (desc.type != .conventional_memory) continue;
+        total += desc.number_of_pages;
+    }
+    return total;
+}
 
-        for (bootboot.bootboot.mmap_entries()) |entry| {
-            totalPhysicalPages += entry.getSizeIn4KiBPages();
+pub export fn totalManagedPhysicalPagesWithHoles() u32 {
+    if (totalPhysicalPages == 0) {
+        var iter = memoryDescriptorIter();
+        while (iter.next()) |desc| {
+            if (desc.type == .reserved_memory_type) continue;
+            const end = (desc.physical_start / 0x1000) + desc.number_of_pages;
+            if (end > totalPhysicalPages) totalPhysicalPages = end;
         }
-
-        return totalPhysicalPages;
     }
+
+    return @intCast(totalPhysicalPages);
 }
 
-pub export fn getHighestPhysicalPageNumber() u32 {
-    var end: usize = 0;
-
-    for (bootboot.bootboot.mmap_entries()) |ent| {
-        if (!ent.isFree()) continue;
-        if (end < ent.endPtr()) end = ent.endPtr();
-    }
-
-    const pages = end / 0x1000;
-
-    if (pages >= std.math.maxInt(u32)) {
-        @panic("physical memory too larger");
-    }
-
-    return @truncate(pages);
-}
-
-pub export fn totalPhysicalPagesWithHoles() u32 {
-    var end: usize = 0;
-
-    for (bootboot.bootboot.mmap_entries()) |ent| {
-        if (end < ent.endPtr()) end = ent.endPtr();
-    }
-
-    const pages = end / 0x1000;
-
-    if (pages >= std.math.maxInt(u32)) {
-        @panic("physical memory too larger");
-    }
-
-    return @truncate(pages);
-}
-
-pub inline fn memory_map() []bootboot.MMapEnt {
-    return bootboot.bootboot.mmap_entries();
+pub fn memoryDescriptorIter() uefi.tables.MemoryDescriptorIterator {
+    const minfo = info.memory;
+    const slice: uefi.tables.MemoryMapSlice = .{
+        .info = .{
+            .descriptor_size = minfo.descriptor_size,
+            .descriptor_version = minfo.descriptor_version,
+            .key = @enumFromInt(0),
+            .len = minfo.descriptor_count,
+        },
+        .ptr = @alignCast(@constCast(minfo.descriptors)),
+    };
+    return slice.iterator();
 }

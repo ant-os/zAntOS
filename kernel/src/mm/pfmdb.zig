@@ -45,7 +45,7 @@ pub fn unlock(token: WriteToken) void {
 }
 
 pub const Pfn = enum(u32) {
-    @"null" = 0,
+    null = 0,
     invalid = std.math.maxInt(u32),
     _,
 
@@ -242,11 +242,10 @@ fn testing_GetPfnAndFrame(idx: u32) struct { Pfn, *PageFrame } {
 pub fn init() !void {
     if (pfmdb_array != null) @panic("pfmdb already initialized");
 
-    const pages = bootldr.totalPhysicalPagesWithHoles();
+    const pages = bootldr.totalManagedPhysicalPagesWithHoles();
     log.info("Initializing PFMDB for {d} physical pages", .{pages});
 
     pfmdb_array = try bootmem.allocator.alloc(PageFrame, pages);
 
     @memset(std.mem.sliceAsBytes(pfmdb_array.?), 0x0);
-
 }

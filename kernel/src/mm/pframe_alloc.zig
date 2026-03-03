@@ -40,16 +40,12 @@ fn initPageFrame(
         },
     );
 
-    frame.* = .{
-        .info = .{
-            .tag = tag,
-            .order = order,
-            .maximum_order = max_order,
-            .flags = .{ .root = root, .isReserved = false },
-        },
-        .origin = origin,
-        .node = .{}
-    };
+    frame.* = .{ .info = .{
+        .tag = tag,
+        .order = order,
+        .maximum_order = max_order,
+        .flags = .{ .root = root, .isReserved = false },
+    }, .origin = origin, .node = .{} };
 }
 
 pub inline fn getGlobalFreelistForOrder(order: mm.Order) ?*std.DoublyLinkedList {
@@ -191,7 +187,7 @@ pub fn allocExactOrder(order: mm.Order, tok: pfmdb.WriteToken) !pfmdb.Pfn {
     std.debug.assert(frame.info.order == order);
 
     try markUsedViaPfnAndToken(frame.pfn().?, tok);
-    
+
     return frame.pfn() orelse return error.InvalidPfn;
 }
 
@@ -335,7 +331,7 @@ fn frameFormFreelistNode(node: *std.DoublyLinkedList.Node, tok: pfmdb.WriteToken
 }
 
 pub fn dumpStats(w: *std.Io.Writer) !void {
-    const total = bootldr.totalPhysicalPagesWithHoles();
+    const total = bootldr.totalManagedPhysicalPagesWithHoles();
     try w.writeAll("\r\nPHYSICAL FRAME ALLOCATOR STATE:\r\n");
     try w.print("(stats are in 4KiB pages)\r\n", .{});
     try w.print("Total Physical Pages: {d}\r\n", .{total});
@@ -354,27 +350,31 @@ pub fn init() !void {
     errdefer log.err("init failed releasing token...", .{});
     defer tok.release();
 
-    for (bootldr.memory_map(), 0..) |ent, i| {
-        log.debug("memory map entry {d}: {s} 0x{x} ({d} pages)", .{
-            i,
-            @tagName(ent.getType()),
-            ent.getPtr(),
-            ent.getSizeIn4KiBPages(),
-        });
+    var i: usize = 0;
+    var iter = bootldr.memoryDescriptorIter();
 
-        if (!ent.isFree()) {
-            _ = totalReservedPages.fetchAdd(@intCast(ent.getSizeIn4KiBPages()), .monotonic);
+    while (iter.next()) |desc| : (i += 1) {
+        const ent: *std.os.uefi.tables.MemoryDescriptor = desc;
+        log.debug("memory map entry {d}: {any} 0x{x} ({d} pages)", .{
+            i,
+            ent.type,
+            ent.physical_start,
+            ent.number_of_pages,
+        });
+        
+        if (ent.type != .conventional_memory) {
+            _ = totalReservedPages.fetchAdd(@intCast(ent.number_of_pages), .monotonic);
             continue;
         }
 
-        std.debug.assert(mm.PAGE_ALIGN.check(ent.getPtr()));
+        std.debug.assert(mm.PAGE_ALIGN.check(ent.physical_start));
 
-        const base: mm.PhysicalAddr = .{ .raw = ent.getPtr() };
+        const base: mm.PhysicalAddr = .{ .raw = ent.physical_start };
 
         const newBase, const pages = if (bootmem.startsAt(base.raw)) blk: {
             _, const usedPages = bootmem.disable() orelse @panic("bootmem already disabled");
 
-            assert(usedPages < ent.getSizeIn4KiBPages());
+            assert(usedPages < ent.number_of_pages);
 
             log.debug("reserving bootmem region ({d} pages)...", .{usedPages});
 
@@ -388,11 +388,11 @@ pub fn init() !void {
                 .static,
             );
 
-            const offBase: usize = @intCast(ent.getPtr() + (usedPages << mm.PAGE_SHIFT));
-            const offPages: u32 = @intCast(ent.getSizeIn4KiBPages() - usedPages);
+            const offBase: usize = @intCast(ent.physical_start + (usedPages << mm.PAGE_SHIFT));
+            const offPages: u32 = @intCast(ent.number_of_pages - usedPages);
 
             break :blk .{ mm.PhysicalAddr{ .raw = offBase }, offPages };
-        } else .{ base, @as(u32, @intCast(ent.getSizeIn4KiBPages())) };
+        } else .{ base, @as(u32, @intCast(ent.number_of_pages)) };
 
         // sweep-init region roots for this memory region.
         _ = try initalizeRegionRoots(
@@ -405,7 +405,7 @@ pub fn init() !void {
         );
     }
 
-    // now we have populated the freelist and set up the initale root page frames,
+    // // now we have populated the freelist and set up the initale root page frames,
     // we are done with init for now ;)
 
 }

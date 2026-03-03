@@ -22,4 +22,4 @@ A Task can also be skipped with `s` or active denoted by `-`.
 - [ ] Documenation (ensure.)
 - [x] Serial I/0 Abstraction.
 - [x] Simple shell via COM1.
-- [ ] Interrupts
+- [x] Interrupts
