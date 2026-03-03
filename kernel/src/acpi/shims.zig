@@ -4,7 +4,7 @@
 
 const uacpi = @import("zuacpi").uacpi;
 const std = @import("std");
-const bootboot = @import("../bootboot.zig");
+const bootloader = @import("../bootloader.zig");
 const binder = @import("zuacpi.zig");
 
 const cc = std.builtin.CallingConvention.c;

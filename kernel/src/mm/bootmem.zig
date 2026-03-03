@@ -1,7 +1,7 @@
 //! Boot Memory ALlocator
 //! 
 //! A fixed buffer allocator for the biggest free physical memory region found
-//! in the memory map provided by the loader (currently bootboot, later antboot2).
+//! in the efi memory map provided by the loader (antboot2).
 //! 
 //! It also has an enabled flag and all allocator functions panic if enabled is false.
 //! 
@@ -11,7 +11,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const bootboot = @import("../bootboot.zig");
+const bootloader = @import("../bootloader.zig");
 const mm = @import("../mm.zig");
 
 const log = std.log.scoped(.bootmem);
@@ -56,24 +56,26 @@ pub fn init() !void {
     if (enabled) return error.AlreadyEnabled;
 
     var largest_region: u64 = 0;
-    var largest_region_size: u64 = 0;
+    var largest_number_of_pages: u64 = 0;
 
-    for (bootboot.bootboot.mmap_entries()) |r| {
-        if (r.getType() != .MMAP_FREE) continue;
-        if (r.getSizeInBytes() < largest_region_size) continue;
+    var iter: std.os.uefi.tables.MemoryDescriptorIterator = bootloader.memoryDescriptorIter();
 
-        largest_region = r.getPtr();
-        largest_region_size = r.getSizeInBytes();
+    while (iter.next()) |r| {
+        if (r.type != .conventional_memory) continue;
+        if (r.number_of_pages < largest_number_of_pages) continue;
+
+        largest_region = r.physical_start;
+        largest_number_of_pages = r.number_of_pages;
     }
 
-    if (largest_region_size == 0 or largest_region == 0)
+    if (largest_number_of_pages == 0 or largest_region == 0)
         return error.NotEnoughtPhysicalMemory;
 
-    log.info("using physical region at 0x{x} with size of {d} bytes.", .{ largest_region, largest_region_size });
+    log.info("using physical region at 0x{x} with size of {d} pages.", .{ largest_region, largest_number_of_pages });
 
     const base_ptr: [*]u8 = @ptrFromInt(largest_region);
 
-    alloc = .init(base_ptr[0..largest_region_size]);
+    alloc = .init(base_ptr[0..(largest_number_of_pages * 0x1000)]);
     enabled = true;
 }
 

@@ -5,6 +5,9 @@
         .zuacpi = .{
             .path = "../../zuacpi",
         },
+        .bootloader = .{
+            .path = "../bootloader"
+        }
     },
     .minimum_zig_version = "0.15.2",
     .paths = .{ "src", "build.zig" },

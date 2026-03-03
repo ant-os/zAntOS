@@ -1,5 +1,4 @@
 const std = @import("std");
-const bootboot = @import("bootboot.zig");
 
 pub const MAX_SUPPORTED_CORES = 255;
 pub const cc = std.builtin.CallingConvention{ .x86_64_sysv = .{} };
@@ -48,13 +47,13 @@ pub const Msr = enum(u32) {
 
 
 pub fn numcores() usize {
-    return bootboot.info.numcores;
+    return 1;
 }
 
 pub fn bspid() u16 {
-    return bootboot.info.bspid;
+    return 0;
 }
 
 pub fn current_cpu() u16 {
-    return bootboot.info.bspid;
+    return 0;
 }

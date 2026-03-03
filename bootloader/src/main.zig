@@ -287,11 +287,7 @@ pub fn allocatePages(pages: usize, ty: uefi.tables.MemoryType) ![]u8 {
 }
 
 pub fn installMapping(virtual: VirtualAddress, physical: u64, attrs: PageAttributes) !void {
-    log.debug("TRACE: installMapping(vaddr = 0x{x}, paddr = 0x{x}, attrs = {any})", .{
-        virtual.raw(),
-        physical,
-        attrs,
-    });
+
 
     if (pml4 == null) pml4 = try allocPageTable();
 
@@ -311,7 +307,6 @@ pub fn installMapping(virtual: VirtualAddress, physical: u64, attrs: PageAttribu
 
 const MappingSize = enum { @"1G", @"2M", @"4K" };
 pub fn installMappingWithSize(virtual: VirtualAddress, physical: u64, attrs: PageAttributes, size: MappingSize) !void {
-
     if (pml4 == null) pml4 = try allocPageTable();
 
     const pdp = try pml4.?[virtual.pml4].getOrCreateTable();
@@ -470,7 +465,7 @@ pub fn main() uefi.Error!void {
 
     //const loadedImage = try efiBootServices().handleProtocol(uefi.protocol.LoadedImage, uefi.handle);
 
-   // log.info("{any}", .{loadedImage});
+    // log.info("{any}", .{loadedImage});
 
     log.info("kernel elf header: {any}", .{elfHdr});
 
@@ -535,7 +530,8 @@ pub fn main() uefi.Error!void {
             AntLoadedKernelMemory,
             pages,
         ));
-
+        
+        @memset(backingMemory, 0);
         @memcpy(backingMemory.ptr, data);
 
         for (0..pages) |pgoff| {
@@ -613,7 +609,7 @@ pub fn main() uefi.Error!void {
         return errorCast(uefi.Error, e) orelse uefi.Error.Unexpected;
     };
 
-    var acpi_ptr: ?*anyopaque = null; 
+    var acpi_ptr: ?*anyopaque = null;
 
     for (uefi.system_table.configuration_table[0..uefi.system_table.number_of_table_entries]) |*cfgtlb| {
         if (!cfgtlb.vendor_guid.eql(uefi.tables.ConfigurationTable.acpi_20_table_guid)) continue;
@@ -637,6 +633,7 @@ pub fn main() uefi.Error!void {
     ) catch return error.OutOfResources;
     const mmap = try efiBootServices().getMemoryMap(mmapBuffer);
 
+    
     bootinfo.* = .{
         .size = @sizeOf(BootInfo),
         .kernel_image = .{
@@ -648,12 +645,14 @@ pub fn main() uefi.Error!void {
             .descriptors = mmap.ptr,
             .descriptor_size = mmap.info.descriptor_size,
             .descriptor_count = mmap.info.len,
+            .descriptor_version = mmap.info.descriptor_version,
         },
         .acpi_ptr = acpi_ptr,
         .efi_ptr = uefi.system_table,
     };
 
     try efiBootServices().exitBootServices(uefi.handle, mmap.info.key);
+
 
     // !! NO PRINT AFTER THIS POINT !! //
 
@@ -662,6 +661,7 @@ pub fn main() uefi.Error!void {
         \\cli
         \\movq %[pml4], %%cr3
         \\movq %[stacktop], %%rsp
+        \\pushq %[canary]
         \\pushq %%r15
         // zero all regs expect for rsp(stack ptr) and rdi(bootinfo ptr).
         \\xorq %%rax, %%rax
@@ -685,6 +685,7 @@ pub fn main() uefi.Error!void {
           [pml4] "{rbx}" (pml4.?),
           [bootinfo] "{rdi}" (bootinfo),
           [entry] "{r15}" (elfHdr.entry),
+          [canary] "{r14}" (@as(u64, 0x74325f656e747279)),
     );
 
     unreachable;
@@ -693,6 +694,7 @@ pub fn main() uefi.Error!void {
 pub const BootInfo = extern struct {
     const Memory = extern struct {
         descriptors: [*]const u8,
+        descriptor_version: u32,
         descriptor_size: usize,
         descriptor_count: usize,
     };

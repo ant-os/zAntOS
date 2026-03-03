@@ -79,8 +79,9 @@ pub fn build(b: *Build) !void {
 
         const writer = b.addWriteFiles();
         const tmp = writer.add("boot.toml", _2);
-        sysrootBuilder.dependOn(&writer.step);
         sysrootBuilder.install(tmp, "boot.toml");
+        sysrootBuilder.dependOn(&writer.step);
+        buildStep.dependOn(&writer.step);
     }
 
     sysrootBuilder.installBinary(osloader, "Boot/antboot.efi");
@@ -89,9 +90,9 @@ pub fn build(b: *Build) !void {
     var imgBuilder = ImageBuilder.init(b, b.dependencyFromBuildZig(dimmer, .{}));
     var rootfs: ImageBuilder.FileSystemBuilder = .init(b);
 
-    rootfs.copyFile(systemroot.path(b, "Boot/antboot.efi"), "//EFI/AntOS/antboot.efi");
-    rootfs.copyFile(systemroot.path(b, "Boot/antboot.efi"), "//EFI/BOOT/BOOTX64.EFI");
-    rootfs.copyDirectory(systemroot, "//AntOS");
+    rootfs.copyFile(osloader.getEmittedBin(), "//EFI/AntOS/antboot.efi");
+    rootfs.copyFile(osloader.getEmittedBin(), "//EFI/BOOT/BOOTX64.EFI");
+    rootfs.copyDirectory(systemroot, "//AntOS/");
 
     const imageContent: ImageBuilder.Content = .{
         .gpt_part_table = .{
@@ -119,8 +120,8 @@ pub fn build(b: *Build) !void {
 
     const imagePath = "output/x86_64/zAntOS-efi.img";
 
-    copyOutputs.step.dependOn(&sysrootBuilder.updateFiles.step);
     copyOutputs.addCopyFileToSource(image, imagePath);
+    copyOutputs.step.dependOn(&sysrootBuilder.updateFiles.step);
 
     buildStep.dependOn(&copyOutputs.step);
 
@@ -154,7 +155,7 @@ pub fn build(b: *Build) !void {
     qemu.addArgs(&.{ "-d", qemuDebug });
     if (qemuNographic) qemu.addArg("-nographic");
     if (qemuNoreboot) qemu.addArg( "-no-reboot");
-    qemu.addArgs(&.{ "-m", "2G" });
+    qemu.addArgs(&.{ "-m", "1G" });
     qemu.step.dependOn(buildStep);
     qemu.step.dependOn(&sysrootBuilder.updateFiles.step);
 

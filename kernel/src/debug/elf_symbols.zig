@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const bootmem = @import("../mm/bootmem.zig");
-const bootboot = @import("../bootboot.zig");
+const bootloader = @import("../bootloader.zig");
 const options = @import("options");
 const logger = @import("../logger.zig");
 
@@ -10,49 +10,10 @@ const log = std.log.scoped(.elf_symbols);
 
 const MAX_INITRD_FILENAME_LEN = 120;
 
-// get the kernel image in the bootboot initrd.
+// get the kernel image as a byte-slice.
 pub noinline fn kernel_image() ![]const u8 {
-    bootmem.enterSealedRegion();
-    defer bootmem.leaveAndDetectLeaks();
-
-    var base: [*]const u8 = undefined;
-    var size: usize = 0;
-    var r: std.io.Reader = .fixed(bootboot.initrd());
-
-    const tmp_filename = try bootmem.allocator.alloc(u8, MAX_INITRD_FILENAME_LEN);
-    defer bootmem.allocator.free(tmp_filename);
-
-    // we create the iterator using bootmem to avoid a stack overflow.
-    const iter = try bootmem.allocator.create(std.tar.Iterator);
-    defer bootmem.allocator.destroy(iter);
-    iter.* = .{
-        .file_name_buffer = tmp_filename,
-        .link_name_buffer = &.{},
-        .reader = &r,
-    };
-
-    log.debug(
-        "looking for kernel image named {s} in bootboot initrd...",
-        .{options.image_name},
-    );
-
-    while (try iter.next()) |file| {
-        if (!std.mem.eql(u8, file.name, options.image_name)) {
-            continue;
-        }
-
-        base = r.buffered().ptr;
-        size = file.size;
-
-        log.info(
-            "found kernel image in tar-based initrd at 0x{x} with size {any}",
-            .{ @intFromPtr(base), size },
-        );
-
-        break;
-    }
-
-    return if (size == 0) error.KernelImageNotFound else base[0..size];
+    const base: [*]u8 = @ptrFromInt(bootloader.info.kernel_image.base);
+    return base[0..bootloader.info.kernel_image.size];
 }
 
 inline fn section_header(header: *const std.elf.Header, buffer: []const u8, index: u32) ?*const std.elf.Shdr {

@@ -47,7 +47,13 @@ pub fn build(b: *std.Build) !void {
     const zuacpi_module = zuacpi.module("zuacpi");
     zuacpi_module.addImport("kmod", kmod);
 
+    const bootloaderDep = b.dependency("bootloader", .{});
+    const bootloader = bootloaderDep.module("loadermod");
+
+    kmod.addImport("bootloader", bootloader);
     kmod.addImport("zuacpi", zuacpi_module);
+
+    
 
     const kernel = b.addExecutable(.{
         .name = "kernel",
@@ -56,6 +62,7 @@ pub fn build(b: *std.Build) !void {
         .use_lld = true,
         .version = .{ .major = 0, .minor = 3, .patch = 1, .pre = "unstable" },
     });
+
 
     const options = b.addOptions();
     options.addOption(
@@ -72,39 +79,36 @@ pub fn build(b: *std.Build) !void {
 
     //  kernel.setLinkerScript(b.path("src/link.ld"))
 
-    kernel.linker_script = b.path("src/link.ld");
-
-    // kernel.strip = true;
+    kernel.setLinkerScript(b.path("link.ld"));
+    kernel.entry = .{ .symbol_name = "antkStartupSystem" };
  
-    //try kernel.force_undefined_symbols.put("bootboot", undefined);
-
     b.installArtifact(kernel);
 
 
-    const ktest = b.addTest(.{
-        .name = "ktest",
-        .root_module = kmod,
-        .use_lld = true,
-        .use_llvm = true,
+    // const ktest = b.addTest(.{
+    //     .name = "ktest",
+    //     .root_module = kmod,
+    //     .use_lld = true,
+    //     .use_llvm = true,
 
-        .test_runner = .{
-            .mode = .simple,
-            .path = b.path("src/test_main.zig"),
-        },
-    });
+    //     .test_runner = .{
+    //         .mode = .simple,
+    //         .path = b.path("src/test_main.zig"),
+    //     },
+    // });
 
-    ktest.linker_script = b.path("src/link.ld");
+    // ktest.linker_script = b.path("src/link.ld");
 
-    b.installArtifact(ktest);
+    // b.installArtifact(ktest);
 
-    const install_docs = b.addInstallDirectory(.{
-        .source_dir = kernel.getEmittedDocs(),
-        .install_dir = .{ .custom = "../output/docs" },
-        .install_subdir = "kernel-internal",
-    });
+    // const install_docs = b.addInstallDirectory(.{
+    //     .source_dir = kernel.getEmittedDocs(),
+    //     .install_dir = .{ .custom = "../output/docs" },
+    //     .install_subdir = "kernel-internal",
+    // });
 
-    const docs_step = b.step("docs", "Install docs into zig-out/docs");
-    docs_step.dependOn(&install_docs.step);
+    // const docs_step = b.step("docs", "Install docs into zig-out/docs");
+    // docs_step.dependOn(&install_docs.step);
 
-    b.install_tls.step.dependOn(docs_step);
+    // b.install_tls.step.dependOn(docs_step);
 }

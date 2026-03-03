@@ -7,7 +7,7 @@
             .path = "bootloader",
         },
         .kernel = .{
-            .path = "loadertest",
+            .path = "kernel",
         },
         .dimmer = .{
             .url = "git+https://github.com/zig-osdev/disk-image-step.git#d880d0295f0794c8f32bff9ae31a787251f3d735",

@@ -65,7 +65,11 @@ fn __createNewPageTable() !u64 {
     }
 
     const pfn = try pframe_alloc.lockAndAllocOrder(.page);
-    return @as(u64, @intCast(pfn.raw())) << mm.PAGE_SHIFT;
+
+    // FIXME: This depends on identity mapping.
+    const ptr: [*]u8 = @ptrFromInt(@as(u64, @intCast(pfn.raw())) << mm.PAGE_SHIFT);
+    @memset(ptr[0..0x1000], 0);
+    return @intFromPtr(ptr);
 }
 
 pub fn allocatePageTableForMapping(page: u64) !MappingEntry {
@@ -100,6 +104,7 @@ pub fn allocatePageTableForMapping(page: u64) !MappingEntry {
 
     if (!pt.present) {
         pt.setAddr(try __createNewPageTable());
+
         pt.present = true;
         pt.writable = true;
     }
@@ -111,6 +116,8 @@ pub fn allocatePageTableForMapping(page: u64) !MappingEntry {
         .pd = index.pdp,
         .pt = index.pd,
     })[index.pt];
+
+    pe.present = true;
 
     return .{
         .entry = pe,
@@ -161,7 +168,7 @@ pub fn translateAddr(virtualAddr: u64) !u64 {
     const page = mm.PAGE_ALIGN.backward(virtualAddr);
     const offset: u12 = @truncate(virtualAddr);
 
-    return (try getPhysicalPage(page)) + offset; 
+    return (try getPhysicalPage(page)) + offset;
 }
 
 pub fn getPhysicalPage(virtualAddr: u64) !usize {
@@ -328,8 +335,8 @@ pub const TableEntry = packed struct {
     disable_cache: bool,
     accessed: bool,
     dirty: bool = false,
-    pat: bool = false,
     huge: bool = false,
+    pat: bool = false,
     avail0: u3,
     addr: u40,
     avail1: u11,
