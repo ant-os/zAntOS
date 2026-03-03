@@ -67,17 +67,21 @@ pub fn build(b: *std.Build) void {
 
     const image = imgBuilder.createDisk(33 * ImageBuilder.MiB, imageContent);
 
-    const copyDiskImage = b.addUpdateSourceFiles();
+    const copyOutputs = b.addUpdateSourceFiles();
 
-    copyDiskImage.step.dependOn(&exe.step);
-    copyDiskImage.step.dependOn(&loadertestKernel.step);
-    copyDiskImage.addCopyFileToSource(image, "output/efi64.img");
+    copyOutputs.step.dependOn(&exe.step);
+    copyOutputs.step.dependOn(&loadertestKernel.step);
+    copyOutputs.addCopyFileToSource(image, "output/efi64.img");
+    copyOutputs.addCopyFileToSource(loadertestKernel.getEmittedBin(), "output/kernel");
 
     const qemu = b.addSystemCommand(&.{"qemu-system-x86_64"});
     qemu.addArg("-nographic");
     qemu.addArgs(&.{"-bios", "/usr/share/ovmf/OVMF.fd"});
     qemu.addArgs(&.{"-hda", "output/efi64.img"});
-    qemu.step.dependOn(&copyDiskImage.step);
+    qemu.addArgs(&.{"-d", "cpu_reset"});
+    qemu.addArg("-no-reboot");
+    qemu.addArgs(&.{"-m", "2G"});
+    qemu.step.dependOn(&copyOutputs.step);
 
     const run = b.step("run", "run the bootloader in qemu");
     run.dependOn(&qemu.step);

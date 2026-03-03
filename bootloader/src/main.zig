@@ -5,7 +5,7 @@ const log = std.log.scoped(.antboot2);
 
 const EfiFile = uefi.protocol.File;
 
-var buffer: [0x1000]u8 = undefined;
+var logBuffer: [8 * 0x1000]u8 = undefined;
 
 pub const version_string = "2.0.0-indev";
 const ParsedInstallConfig = toml.Parsed(InstallConfig);
@@ -167,7 +167,7 @@ pub fn _logFn(
     args: anytype,
 ) void {
     const chars = std.fmt.bufPrint(
-        &buffer,
+        &logBuffer,
         "[{s}] {s}: " ++ format ++ "\r\n",
         .{ @tagName(level), @tagName(scope) } ++ args,
     ) catch @panic("buffer to small");
@@ -187,7 +187,12 @@ pub inline fn efiBootServices() *uefi.tables.BootServices {
     return uefi.system_table.boot_services.?;
 }
 
+const AntGenericArenaMemory: uefi.tables.MemoryType = @enumFromInt(0xAA000000);
 const AntModuleDataMemory: uefi.tables.MemoryType = @enumFromInt(0xAA000001);
+const AntLoadedKernelMemory: uefi.tables.MemoryType = @enumFromInt(0xAA000002);
+const AntEarlyReclaimableMemory: uefi.tables.MemoryType = @enumFromInt(0xAA000003);
+const AntPreallocatedStackMemory: uefi.tables.MemoryType = @enumFromInt(0xAA000003);
+// ...
 
 pub fn efiGetFileInfo(
     self: *uefi.protocol.File,
@@ -226,13 +231,14 @@ pub inline fn errorCast(comptime E: type, err: anytype) ?E {
 // 0xFFFF_B000_0000_0000..0xFFFF_F000_0000_0000: paged space pool
 // load kernel and module files to (0xFFFF_F000_0000_0000..0xFFFF_F010_0000_0000)
 // (0xFFFF_F010_0000_0000..0xFFFF_F800_0000_0000 is for loaded driver images)
-// 0xFFFF_FA80_0000_0000..0xFFFF_FB80_0000_0000: Generic Memory Pool (PFMDB, Object Pools[Slab])
+// 0xFFFF_FA80_0000_0000..0xFFFF_FB80_0000_0000: Generic Memory Pool (Loader Mappings[later relcaimed], PFMDB, Genric Fixed-SLot Pool Area)
 // 0xFFFF_FB80_0000_0000..0xFFFF_FC00_0000_0000: rescusive page tables
 // 0xFFFF_FC00_0000_0000..0xFFFF_FC80_0000_0000: System PTE pool (for mmio)
 // 0xFFFF_FC80_0000_0000..0xFFFF_FCFF_C000_0000: kernel stacks
 // 0xFFFF_FCFF_C000_0000..0xFFFF_FD00_0000_0000: per-core data
 // 0xFFFF_FD00_0000_0000..0xFFFF_FF00_0000_0000: framebuffers
-// 0xFFFF_FFFF_8000_0000..0xFFFF_FFFF_FFFF_F000: kernel image
+// 0xFFFF_FFFF_8000_0000..0xFFFF_FFFF_FFFF_0000: kernel image
+// 0xFFFF_FFFF_FFFF_1000..0xFFFF_FFFF_FFFF_8000: bsp-init stack.
 
 const PAGE_ALIGN = std.mem.Alignment.fromByteUnits(0x1000);
 
@@ -258,6 +264,94 @@ pub fn loadModuleData(install: *OsInstallation, path: []const u8, alloc: std.mem
     return raw[0..read];
 }
 
+pub const PageAttributes = packed struct(u8) {
+    writable: bool = true,
+    no_cache: bool = false,
+    write_through: bool = false,
+    user: bool = false,
+    no_execute: bool = false,
+    reserved: u3 = 0,
+};
+
+var pml4: ?*[512]PTE = null;
+
+pub fn allocPageTable() !*[512]PTE {
+    const pages = try efiBootServices().allocatePages(.any, .loader_data, 1);
+    @memset(&pages[0], 0);
+    return @ptrCast(&pages[0]);
+}
+pub const VirtualAddress = packed struct {
+    pageoff: u12,
+    pt: u9,
+    pd: u9,
+    pdp: u9,
+    pml4: u9,
+    signext: u16,
+
+    pub fn raw(self: VirtualAddress) u64 {
+        return @bitCast(self);
+    }
+};
+
+pub fn allocatePages(pages: usize, ty: uefi.tables.MemoryType) ![]u8 {
+    return @ptrCast(
+        try efiBootServices().allocatePages(
+            .{ .max_address = @ptrFromInt(@"16GiB") },
+            ty,
+            pages,
+        ),
+    );
+}
+
+pub fn installMapping(virtual: VirtualAddress, physical: u64, attrs: PageAttributes) !void {
+    log.debug("TRACE: installMapping(vaddr = 0x{x}, paddr = 0x{x}, attrs = {any})", .{
+        virtual.raw(),
+        physical,
+        attrs,
+    });
+
+    if (pml4 == null) pml4 = try allocPageTable();
+
+    const pdp = try pml4.?[virtual.pml4].getOrCreateTable();
+    const pd = try pdp[virtual.pdp].getOrCreateTable();
+    const pt = try pd[virtual.pd].getOrCreateTable();
+    const pte = &pt[virtual.pt];
+
+    pte.setAddr(physical);
+    pte.present = true;
+    pte.writable = attrs.writable;
+    pte.disable_cache = attrs.no_cache;
+    pte.write_through = attrs.write_through;
+    pte.user = attrs.user;
+    pte.no_execute = attrs.no_execute;
+}
+
+const MappingSize = enum { @"1G", @"2M", @"4K" };
+pub fn installMappingWithSize(virtual: VirtualAddress, physical: u64, attrs: PageAttributes, size: MappingSize) !void {
+
+    if (pml4 == null) pml4 = try allocPageTable();
+
+    const pdp = try pml4.?[virtual.pml4].getOrCreateTable();
+    if (size == .@"1G") return installMappingAtEntry(&pdp[virtual.pdp], physical, attrs, size);
+    const pd = try pdp[virtual.pdp].getOrCreateTable();
+    if (size == .@"2M") return installMappingAtEntry(&pd[virtual.pd], physical, attrs, size);
+    const pt = try pd[virtual.pd].getOrCreateTable();
+    if (size == .@"4K") return installMappingAtEntry(&pt[virtual.pt], physical, attrs, size);
+
+    @panic("unknown size");
+}
+
+inline fn installMappingAtEntry(pte: *PTE, physical: u64, attrs: PageAttributes, size: MappingSize) void {
+    pte.setAddr(physical);
+    pte.present = true;
+    pte.huge = size != .@"4K";
+    pte.writable = attrs.writable;
+    pte.disable_cache = attrs.no_cache;
+    pte.write_through = attrs.write_through;
+    pte.user = attrs.user;
+    pte.no_execute = attrs.no_execute;
+}
+
 pub const PTE = packed struct {
     present: bool,
     writable: bool,
@@ -266,15 +360,21 @@ pub const PTE = packed struct {
     disable_cache: bool,
     accessed: bool,
     dirty: bool = false,
-    pat: bool = false,
     huge: bool = false,
+    pat: bool = false,
     avail0: u3,
     addr: u40,
     avail1: u11,
     no_execute: bool,
 
-    pub fn asTable(self: *const @This()) *[512]PTE {
-        return @ptrFromInt(self.getAddr());
+    pub fn getOrCreateTable(self: *PTE) !*[512]PTE {
+        return if (self.present) @ptrFromInt(self.getAddr()) else blk: {
+            const table = try allocPageTable();
+            self.setAddr(@intFromPtr(table));
+            self.present = true;
+            self.writable = true;
+            break :blk table;
+        };
     }
 
     pub fn getAddr(self: *const @This()) u64 {
@@ -286,14 +386,61 @@ pub const PTE = packed struct {
     }
 };
 
-var pml4: ?*[512]PTE = null;
+inline fn section_header(header: *const std.elf.Header, buffer: []const u8, index: u32) ?*const std.elf.Shdr {
+    if (index > header.shnum) return null;
+    const offset = header.shoff + @sizeOf(std.elf.Shdr) * index;
+    return @ptrCast(@alignCast(&buffer[offset]));
+}
+
+inline fn section_name(header: *const std.elf.Header, buffer: []const u8, index: u32) ?[]const u8 {
+    if (index == 0) return null;
+    const shstr = section_header(
+        header,
+        buffer,
+        header.shstrndx,
+    ).?;
+
+    return strtab_get(buffer, shstr, index);
+}
+
+inline fn strtab_get(buffer: []const u8, tab: *const std.elf.Shdr, index: u32) ?[]const u8 {
+    if (index == 0) return null;
+
+    if (index >= tab.sh_size) return null;
+
+    const name: [*c]const u8 = buffer[tab.sh_offset + index ..].ptr;
+
+    return name[0..std.mem.len(name)];
+}
+
+pub fn getHighestConvtionalPhysicalPage(alloc: std.mem.Allocator) !u64 {
+    const info = try efiBootServices().getMemoryMapInfo();
+    const buffer = alloc.alignedAlloc(
+        u8,
+        .of(uefi.tables.MemoryDescriptor),
+        (info.len + 1) * info.descriptor_size,
+    ) catch return error.OutOfResource;
+    defer alloc.free(buffer);
+    const mmap = try efiBootServices().getMemoryMap(buffer);
+    var iter = mmap.iterator();
+
+    var addr = 0;
+    while (iter.next()) |desc| {
+        const end = desc.physical_start + (desc.number_of_pages * 0x1000);
+        if (end > addr) addr = end;
+    }
+
+    return addr / 0x1000;
+}
+
+const Gib = (1024 * 1024 * 1024);
+const Mib = (1024 * 1024);
+const @"16GiB" = 16 * Gib;
 
 pub fn main() uefi.Error!void {
-    const info = try uefi.system_table.boot_services.?.getMemoryMapInfo();
-    std.log.info("info = {any}", .{info});
+    asm volatile ("cli");
     var arena: std.heap.ArenaAllocator = .init(uefi.pool_allocator);
     const alloc = arena.allocator();
-    defer arena.deinit();
 
     var install = getFirstOsInstall() catch |e| {
         log.err("failed to discover os installation: {s}", .{@errorName(e)});
@@ -326,25 +473,98 @@ pub fn main() uefi.Error!void {
     };
     // no free becuse image will stay loaded past kernel handoff.
 
-    log.info("kernel image data loaded at 0x{x} with size of {d}", .{
+    log.debug("kernel image data loaded at 0x{x} with size of {d}", .{
         @intFromPtr(kernelImage.ptr),
         kernelImage.len,
     });
+
+    log.info("parsing and loading kernel image...", .{});
 
     const elfHdr = std.elf.Header.init(
         @as(*const std.elf.Ehdr, @ptrCast(@alignCast(kernelImage.ptr))).*,
         .little,
     );
 
+    //const loadedImage = try efiBootServices().handleProtocol(uefi.protocol.LoadedImage, uefi.handle);
+
+   // log.info("{any}", .{loadedImage});
+
     log.info("kernel elf header: {any}", .{elfHdr});
+
+    var shdrIter = elfHdr.iterateSectionHeadersBuffer(kernelImage);
+
+    while (shdrIter.next() catch |e| {
+        log.err("failed to parse section header: {s}", .{@errorName(e)});
+        return errorCast(uefi.Error, e) orelse error.LoadError;
+    }) |shdr| {
+        log.info("section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}", .{
+            section_name(
+                &elfHdr,
+                kernelImage,
+                shdr.sh_name,
+            ) orelse "<no name>",
+            shdr.sh_offset,
+            shdr.sh_size,
+            shdr.sh_addr,
+            shdr.sh_addr + shdr.sh_size,
+        });
+    }
 
     var phdrIter = elfHdr.iterateProgramHeadersBuffer(kernelImage);
 
-    while (phdrIter.next() catch |e|{
-        log.err("failed to load kernel image: {s}", .{@errorName(e)});
+    while (phdrIter.next() catch |e| {
+        log.err("failed to parse program header: {s}", .{@errorName(e)});
         return errorCast(uefi.Error, e) orelse error.LoadError;
-    }) |e| {
-        log.info("program header: {any}", .{e});
+    }) |phdr| {
+        if (phdr.p_type != std.elf.PT_LOAD) {
+            log.warn("non loadable program header in kernel image of type 0x{x}", .{phdr.p_type});
+            continue;
+        }
+
+        if (!PAGE_ALIGN.check(phdr.p_vaddr)) {
+            log.err("load section start address not paged-aligned", .{});
+            continue;
+        }
+
+        if (phdr.p_filesz > phdr.p_memsz) {
+            log.err("load section is larger in image than in memory", .{});
+            continue;
+        }
+
+        const pages = PAGE_ALIGN.forward(phdr.p_memsz) / 0x1000;
+
+        log.info(
+            "loading segment at offset 0x{x} and size of {d} bytes(file: {d} bytes) and memory range of 0x{x}..0x{x}",
+            .{
+                phdr.p_offset,
+                phdr.p_memsz,
+                phdr.p_filesz,
+                phdr.p_vaddr,
+                phdr.p_vaddr + (pages * 0x1000),
+            },
+        );
+
+        const data = kernelImage[phdr.p_offset..(phdr.p_offset + phdr.p_filesz)];
+        log.debug("first 8 bytes of data: {any}", .{data[0..8]});
+
+        const backingMemory: []u8 = @ptrCast(try efiBootServices().allocatePages(
+            .any,
+            AntLoadedKernelMemory,
+            pages,
+        ));
+
+        @memcpy(backingMemory.ptr, data);
+
+        for (0..pages) |pgoff| {
+            const addr: VirtualAddress = @bitCast(phdr.p_vaddr + (pgoff * 0x1000));
+            const physAddr = @intFromPtr(backingMemory.ptr) + (pgoff * 0x1000);
+            installMapping(addr, physAddr, .{
+                .writable = (phdr.p_flags & std.elf.PF_W) > 0,
+            }) catch |e| {
+                log.err("failed to map segment: {s}", .{@errorName(e)});
+                break;
+            };
+        }
     }
 
     // const mem = uefi.pool_allocator.alignedAlloc(
@@ -377,7 +597,123 @@ pub fn main() uefi.Error!void {
 
     // log.debug("filesystem = {any}", .{sfs});
 
-    while (true) {
-        asm volatile ("hlt");
-    }
+    // up and down are reservsed
+
+    log.info("setting up 28KiB init-bsp stack...", .{});
+    const stackaddr = 0xFFFF_FFFF_FFFF_1000;
+    const stacksize = 0x7000;
+
+    const stackdata = @intFromPtr((try efiBootServices().allocatePages(
+        .any,
+        AntPreallocatedStackMemory,
+        stacksize / 0x1000,
+    )).ptr);
+
+    for (0..(stacksize / 0x1000)) |pgoff| installMapping(
+        @bitCast(stackaddr + (pgoff * 0x1000)),
+        stackdata + (pgoff * 0x1000),
+        .{ .writable = true },
+    ) catch |e| {
+        log.err("failed to map stac page: {s}", .{@errorName(e)});
+        return errorCast(uefi.Error, e) orelse uefi.Error.Unexpected;
+    };
+
+    log.debug("identity mapping memory...", .{});
+
+    for (0..(@"16GiB" / (2 * Mib))) |pfn| installMappingWithSize(
+        @bitCast(pfn * (2 * Mib)),
+        pfn * (2 * Mib),
+        .{ .writable = true },
+        .@"2M",
+    ) catch |e| {
+        log.err("failed to identity map large page (addr = 0x{x}): {s}", .{ pfn * Gib, @errorName(e) });
+        return errorCast(uefi.Error, e) orelse uefi.Error.Unexpected;
+    };
+
+    // free all temporary allocations
+    arena.deinit();
+
+    const bootinfo: *BootInfo = @ptrCast(@alignCast(
+        (allocatePages(1, .loader_data) catch return error.OutOfResources).ptr,
+    ));
+
+    const info = try efiBootServices().getMemoryMapInfo();
+    const mmapBuffer = uefi.pool_allocator.alignedAlloc(
+        u8,
+        .of(uefi.tables.MemoryDescriptor),
+        (info.len + 1) * info.descriptor_size,
+    ) catch return error.OutOfResources;
+    const mmap = try efiBootServices().getMemoryMap(mmapBuffer);
+
+    bootinfo.* = .{
+        .size = @sizeOf(BootInfo),
+        .kernel_image = .{
+            .path = "<kernel>",
+            .base = @intFromPtr(kernelImage.ptr),
+            .size = kernelImage.len,
+        },
+        .memory = .{
+            .descriptors = mmap.ptr,
+            .descriptor_size = mmap.info.descriptor_size,
+            .descriptor_count = mmap.info.len,
+        },
+    };
+
+    log.debug("kernel handoff", .{});
+    try efiBootServices().exitBootServices(uefi.handle, mmap.info.key);
+
+    // !! NO PRINT AFTER THIS POINT !! //
+
+    asm volatile (
+        \\__kernel_handoff:
+        \\cli
+        \\movq %[pml4], %%cr3
+        \\movq %[stacktop], %%rsp
+        \\pushq %%r15
+        // zero all regs expect for rsp(stack ptr) and rdi(bootinfo ptr).
+        \\xorq %%rax, %%rax
+        \\movq %%rax, %%rbx
+        \\movq %%rax, %%rcx
+        \\movq %%rax, %%rdx
+        \\movq %%rax, %%rbp
+        \\movq %%rax, %%rsi
+        \\movq %%rax, %%r8
+        \\movq %%rax, %%r9
+        \\movq %%rax, %%r10
+        \\movq %%rax, %%r11
+        \\movq %%rax, %%r12
+        \\movq %%rax, %%r12
+        \\movq %%rax, %%r13
+        \\movq %%rax, %%r14
+        \\movq %%rax, %%r15
+        \\retq
+        :
+        : [stacktop] "{rax}" (stackaddr + stacksize),
+          [pml4] "{rbx}" (pml4.?),
+          [bootinfo] "{rdi}" (bootinfo),
+          [entry] "{r15}" (elfHdr.entry),
+    );
+
+    unreachable;
 }
+
+const BootInfo = extern struct {
+    const Memory = extern struct {
+        descriptors: [*]const u8,
+        descriptor_size: usize,
+        descriptor_count: usize,
+    };
+
+    const Image = extern struct {
+        path: [*:0]const u8,
+        base: usize,
+        size: usize,
+    };
+
+    major_verion: usize = 0,
+    minor_verion: usize = 1,
+    size: usize,
+
+    kernel_image: Image,
+    memory: Memory,
+};

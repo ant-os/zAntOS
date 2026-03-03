@@ -1,26 +1,23 @@
 ENTRY(antkStartupSystem)
 
-
 SECTIONS 
 {
     . = 0xffffffff80000000;
     
-    .text : { *(.text .text.* ) }
-    .rodata : { *(.rodata .rodata.*) }
-    .data : { *(.data .data.*) }
+    .text ALIGN(0x1000) : {
+        *(.text .text.* )
+    }
+    .rodata ALIGN(0x1000): {
+        *(.rodata .rodata.*)
+    }
+    .data ALIGN(0x1000): {
+        *(.data .data.*)
+    }
 
-    .bss (NOLOAD) : {
-        . = ALIGN(16);
+    .bss ALIGN(0x1000) (NOLOAD) : {
         *(.bss .bss.*)
         *(COMMON)
     }
 
-    .moduledata ABSOLUTE(0xFFFFF00000000000) (NOLOAD) : {
-        . = 0xFFFFF00000000000;
-        __antboot_moduledata_start = .;
-        . = 0xFFFFF01000000000;
-        __antboot_moduledata_end = .;
-    } 
-
-    /DISCARD/ : { *(.eh_frame) *(.comment) }
+    /DISCARD/ : { *(.eh_frame*) *(.comment) }
 }

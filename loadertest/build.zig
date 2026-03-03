@@ -41,6 +41,8 @@ pub fn build(b: *std.Build) !void {
         .omit_frame_pointer = false,
     });
 
+    
+
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_module = kmod,
@@ -49,8 +51,11 @@ pub fn build(b: *std.Build) !void {
         .version = .{ .major = 0, .minor = 4, .patch = 1, .pre = "unstable" },
     });
 
-    kernel.linker_script = b.path("link.ld");
+    kernel.entry = .{ .symbol_name = "antkStartupSystem" };
+    kernel.setLinkerScript(b.path("link.ld"));
     kmod.addImport("kmod", kmod);
 
+    
     b.installArtifact(kernel);
+    
 }
