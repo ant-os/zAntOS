@@ -3,11 +3,90 @@ const pfmdb = @import("pfmdb.zig");
 const mm = @import("../mm.zig");
 const pframe_alloc = @import("pframe_alloc.zig");
 const arch = @import("../arch.zig");
+const pte = @import("pte.zig");
 
 const log = std.log.scoped(.paging);
 
 /// Index in the PML4 used by the recursive page table, e.g. that points to the PML4 itself.
-const RECURSIVE_ENTRY_INDEX = 510;
+pub const RECURSIVE_ENTRY_INDEX = 510;
+
+pub const PhysicalAddress = packed union {
+    uint: u64,
+    split: packed struct(u64) {
+        pageoffset: u12 = 0,
+        pfn: pfmdb.Pfn,
+        _: u20 = 0,
+    },
+};
+
+pub const Pfi = packed struct(u36) {
+    pub const @"null": Pfi = @bitCast(@as(u36, 0));
+
+    pt_index: u9,
+    pd_index: u9,
+    pdp_index: u9,
+    pml4_index: u8,
+    kernel: bool,
+
+    pub fn getPte(self: Pfi) *pte.Pte {
+        const vaddr: VirtualAddress = .{
+            .pte = .{
+                .pfi = self,
+            },
+        };
+
+        return @ptrCast(@alignCast(vaddr.ptr));
+    }
+
+    pub fn addr(self: Pfi) VirtualAddress {
+        return .{
+            .split = .{
+                .pt_index = self.pt_index,
+                .pd_index = self.pd_index,
+                .pdp_index = self.pdp_index,
+                .pml4_index = self.pml4_index,
+                .addressspace = if (self.kernel) .kernel else .user,
+            },
+        };
+    }
+};
+
+pub const VirtualAddress = packed union {
+    uint: u64,
+    ptr: [*]u8,
+    split: packed struct(u64) {
+        pageoffset: u12 = 0,
+        pt_index: u9,
+        pd_index: u9,
+        pdp_index: u9,
+        pml4_index: u8,
+        addressspace: enum(u17) { kernel = std.math.maxInt(u17), user = 0, _ },
+    },
+    pte: packed struct(u64) {
+        _: u3 = 0,
+        pfi: Pfi,
+        addressspace: enum(u25) {
+            recursive_page_tables = (std.math.maxInt(u16) << 9) | RECURSIVE_ENTRY_INDEX,
+            _,
+        } = .recursive_page_tables,
+
+        pub fn ptr(self: *@This()) *pte.Pte {
+            if (self.addressspace != .recursive_page_tables) @panic("pte pointer outside of recursive page tables");
+            const vaddr = @as(VirtualAddress, @bitCast(self.*));
+
+            return @ptrCast(@alignCast(vaddr.ptr));
+        }
+    },
+
+    pub fn of(ptr: anytype) VirtualAddress {
+        comptime if (@typeInfo(@TypeOf(ptr)) != .pointer) @compileError(std.fmt.comptimePrint(
+            "expected a pointer found {s}",
+            .{@tagName(@typeInfo(@TypeOf(ptr)))},
+        ));
+
+        return .{ .ptr = @ptrCast(@constCast(ptr)) };
+    }
+};
 
 const PageAccessor = struct {
     pml4: u9 = RECURSIVE_ENTRY_INDEX,
@@ -52,7 +131,7 @@ const PageTableLevel = enum { pml4, pdp, pd, pt };
 const PageTable = [512]TableEntry;
 const MappingEntry = struct {
     entry: *TableEntry,
-    parentEntry: *TableEntry,
+    parentTable: *PageTable,
 };
 
 var first_pt: bool = true;
@@ -111,17 +190,17 @@ pub fn allocatePageTableForMapping(page: u64) !MappingEntry {
 
     if (pt.huge) todo("huge pages");
 
-    const pe = &PageAccessor.asPointer(PageTable, .{
+    const parent = PageAccessor.asPointer(PageTable, .{
         .pdp = index.pml4,
         .pd = index.pdp,
         .pt = index.pd,
-    })[index.pt];
+    });
 
-    pe.present = true;
+    const pe = &parent[index.pt];
 
     return .{
         .entry = pe,
-        .parentEntry = pt,
+        .parentTable = parent,
     };
 }
 

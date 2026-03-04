@@ -42,7 +42,7 @@ pub fn build(b: *Build) !void {
 
     //
 
-    const buildStep = b.default_step;
+    const buildStep = b.getInstallStep();
     const runStep = b.step("run", "run the os using qemu");
 
     const bootloader = b.dependency("bootloader", .{

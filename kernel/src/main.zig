@@ -15,6 +15,9 @@ const pfmdb = @import("mm/pfmdb.zig");
 const pframe_alloc = @import("mm/pframe_alloc.zig");
 const vmm = @import("mm/vmm.zig");
 const heap = @import("mm/heap.zig");
+const syspte = @import("mm/syspte.zig");
+const mm = @import("mm.zig");
+
 const antboot = @import("bootloader");
 const bootloader = @import("bootloader.zig");
 
@@ -77,6 +80,8 @@ pub noinline fn earlybug(comptime key: anytype) noreturn {
 
 pub const panic = @import("panic.zig").__zig_panic_impl;
 
+pub const zuacpi_options: @import("zuacpi").Options = .{ .allocator = heap.allocator };
+
 // Entry point, called by Loader
 export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn {
     // @setRuntimeSafety(false);
@@ -89,13 +94,11 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     // 5. initalize paging and update struct pointers.
     // Last: Start shell.
 
-
     logger.init() catch unreachable;
 
     bootloader.info = info;
 
     log.info("boot info: {any}", .{info});
-
 
     bootmem.init() catch |e| {
         log.err("failed to initalize bootmem alloc: {s}", .{@errorName(e)});
@@ -159,7 +162,6 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
         .currentCpu(),
     ) catch unreachable});
 
-
     asm volatile ("int $0x20");
 
     var r: u64 = 0;
@@ -173,6 +175,17 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
 
     kpcb.current().scheduler.init() catch unreachable;
     apic.init() catch unreachable;
+
+    syspte.init() catch unreachable;
+
+    log.info("temporary mapping virtaddr: {any}", .{mm.map(
+        .{ .uint = 0xAAAA0000 },
+        32,
+        .{},
+    )});
+    uacpi.initialize(.{}) catch unreachable;
+
+    arch.halt_cpu();
 
     log.info("trying to create thread", .{});
 
