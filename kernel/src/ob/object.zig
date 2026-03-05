@@ -8,6 +8,8 @@ const Type = enum(u8) {
     thread,
     process,
     hardware_io,
+    driver,
+    device,
     _,
 };
 

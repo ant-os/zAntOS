@@ -28,6 +28,10 @@ const pci = @import("pci.zig");
 const irql = @import("interrupts/irql.zig");
 const interrupts = @import("interrupts.zig");
 
+const Driver = @import("antkd/Driver.zig");
+const Device = @import("antkd/Device.zig");
+const Irp = @import("antkd/Irp.zig");
+
 const Scheduler = @import("scheduler.zig");
 
 const apic = @import("apic.zig");
@@ -171,7 +175,7 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     std.mem.doNotOptimizeAway(@import("acpi/shims.zig").uacpi_kernel_get_rsdp(&r));
 
     kpcb.current().scheduler.init() catch unreachable;
-  //  apic.init() catch unreachable;
+    //  apic.init() catch unreachable;
 
     log.info("temporary mapping virtaddr: {any}", .{mm.map(
         .{ .uint = 0xAAAA0000 },
@@ -181,13 +185,15 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
 
     uacpi.initialize(.{}) catch unreachable;
     pci.init() catch unreachable;
+
+    testing_() catch unreachable;
+
     // uacpi.namespace.get_root().for_each_child_simple(&struct {
     //     pub fn call(_: ?*anyopaque, node: *uacpi.namespace.NamespaceNode, depth: u32) callconv(.c) uacpi.namespace.IterationDecision {
     //         log.info("{d}, node {s} of type {any}", .{depth, node.generate_absolute_path() orelse "<???>", node.node_type()});
     //         return .@"continue";
     //     }
     // }.call, null) catch unreachable;
-    
 
     arch.halt_cpu();
 
@@ -217,6 +223,38 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     logger.println("END", .{}) catch unreachable;
 
     arch.halt_cpu();
+}
+
+pub fn testing_() !void {
+    try logger.newline();
+
+    const mydrv = try Driver.create("example", &.{"ANT0000"});
+    mydrv.setCallback(
+        .example,
+        @ptrCast(&struct {
+            pub fn call(self: *Irp, params: *std.meta.TagPayloadByName(Irp.MajorFunction, "example"), _: ?*anyopaque) anyerror!void {
+                klog.debug("callback invoked, irp = {any} and params = {any}", .{ self, params });
+            }
+        }.call),
+    );
+
+    klog.debug("my driver: {any}", .{mydrv});
+
+    const mydev = try Device.create("test device", null);
+    mydev.driver = mydrv;
+
+    klog.debug("my device: {any}", .{mydev});
+
+    const irp = try Irp.create();
+    try irp.addEntry(
+        mydev,
+        .{
+            .example = .{ .a = 1234 },
+        },
+        null,
+    );
+
+    klog.debug("{any} (expecting void)", .{irp.executeSingle()});
 }
 
 export fn mythreadfunc(ctx: ?*anyopaque) callconv(arch.cc) noreturn {
