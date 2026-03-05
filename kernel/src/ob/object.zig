@@ -6,8 +6,11 @@ const arch = @import("../arch.zig");
 
 const Type = enum(u8) {
     thread,
+    process,
+    hardware_io,
     _,
 };
+
 
 pub const VTable = struct {
     deinit: *const fn(*Header) void,
@@ -18,7 +21,7 @@ pub const VTable = struct {
 pub const Header = struct {
     @"type": Type,
     vtable: VTable,
-    ptr_count: u64 = 0,
+    ptr_count: u64 = 1,
     handle_count: u64 = 0,
 
     pub fn ref(self: *Header) void {

@@ -19,6 +19,10 @@ idle_thread: ?*Thread = null,
 local_lock: IrqSafeSpinlock = .init,
 ready_queue: std.DoublyLinkedList = .{},
 
+pub fn getCurrentThread(self: *Scheduler) ?*Thread {
+    return self.current_thread;
+}
+
 pub fn schedule(self: *Scheduler, frame: *TrapFrame) void {
     irql.assertLessOrEqual(.dispatch);
 
@@ -50,7 +54,7 @@ pub fn setRunning(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
     std.debug.assert(thread.state == .ready);
     if (thread.saved_context == null) @panic("thread has no saved context");
 
-    log.debug("switching to new thread with id {d}", .{thread.id});
+    log.debug("switching to new thread with id {d}", .{thread.id.uint});
 
     thread.saved_context.?.applyToFrame(frame);
     thread.state = .running;

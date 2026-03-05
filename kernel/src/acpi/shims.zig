@@ -1,11 +1,16 @@
 //! Shims for uACPI
 //!
 
-
 const uacpi = @import("zuacpi").uacpi;
 const std = @import("std");
 const bootloader = @import("../bootloader.zig");
 const binder = @import("zuacpi.zig");
+const mm = @import("../mm.zig");
+const kpcb = @import("../kpcb.zig");
+const Thread = @import("../scheduling/thread.zig");
+const HardwareIo = @import("../hwio.zig");
+const heap = @import("../mm/heap.zig");
+const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
 
 const cc = std.builtin.CallingConvention.c;
 
@@ -15,50 +20,61 @@ fn trace(comptime src: std.builtin.SourceLocation, args: anytype) void {
     log.debug("TRACE {s} with args {any}", .{ src.fn_name, args });
 }
 
-pub export fn uacpi_kernel_map(addr: *u8, len: usize) callconv(cc) ?*u8 {
-    trace(@src(), .{ addr, len });
-    return addr;
+pub export fn uacpi_kernel_map(addr: mm.PhysicalAddress, size: usize) callconv(cc) ?[*]u8 {
+    trace(@src(), .{ addr.ptr, size });
+    return mm.map(addr, size, .{
+        .writable = true,
+    }) catch return null;
 }
 
-export fn uacpi_kernel_unmap(addr: [*]u8, len: usize) callconv(cc) void {
-    trace(@src(), .{ addr, len });
+export fn uacpi_kernel_unmap(addr: mm.VirtualAddress, size: usize) callconv(cc) void {
+    trace(@src(), .{ addr.ptr, size });
+    mm.unmap(addr, size) catch @panic("uacpi_kernel_unmap(): invalid parameter");
 }
 
 pub export fn uacpi_kernel_get_rsdp(addr: *u64) callconv(cc) uacpi.uacpi_status {
     trace(@src(), .{});
-    
     addr.* = binder.get_rsdp();
     return .ok;
 }
 
 export fn uacpi_kernel_pci_device_open(
     addr: uacpi.PciAddress,
-    out_handle: **anyopaque,
+    out_handle: **HardwareIo,
 ) callconv(cc) uacpi.uacpi_status {
-    _ = out_handle;
     trace(@src(), .{addr});
-    return .unimplemented;
+    // for now just return a HardwareIo object.
+    out_handle.* = HardwareIo.fromInternal(.{
+        .pci = .{
+            .bus = addr.bus,
+            .device = addr.device,
+            .function = addr.function,
+            .segment = addr.segment,
+        },
+    }) catch return .out_of_memory;
+    return .ok;
 }
 
 comptime {
     for (&.{ u8, u16, u32 }) |T| {
         const S = struct {
-            pub fn ir(handle: u16, offset: usize, ret: *T) callconv(cc) uacpi.uacpi_status {
-                _ = ret;
-                trace(@src(), .{handle, offset});
-                return .unimplemented;
+            pub fn ir(handle: *HardwareIo, offset: usize, ret: *T) callconv(cc) uacpi.uacpi_status {
+                trace(@src(), .{ handle.device, offset });
+                ret.* = handle.read(T, offset) catch return .internal_error;
+                return .ok;
             }
-            pub fn iw(handle: u16, offset: usize, value: T) callconv(cc) uacpi.uacpi_status {
-                trace(@src(), .{handle, offset, value});
-                return .unimplemented;
+            pub fn iw(handle: *HardwareIo, offset: usize, value: T) callconv(cc) uacpi.uacpi_status {
+                trace(@src(), .{ handle.device, offset, value });
+                handle.write(T, offset, value) catch return .internal_error;
+                return .ok;
             }
             pub fn pr(address: *anyopaque, offset: usize, ret: *T) callconv(cc) uacpi.uacpi_status {
-                  _ = ret;
-                trace(@src(), .{address, offset});
+                _ = ret;
+                trace(@src(), .{ address, offset });
                 return .unimplemented;
             }
             pub fn pw(address: *anyopaque, offset: usize, value: T) callconv(cc) uacpi.uacpi_status {
-                trace(@src(), .{address, offset, value});
+                trace(@src(), .{ address, offset, value });
                 return .unimplemented;
             }
         };
@@ -70,35 +86,55 @@ comptime {
     }
 }
 
-export fn uacpi_kernel_pci_device_close(_: usize) void {
-    trace(@src(), .{});
+export fn uacpi_kernel_pci_device_close(hwio: *HardwareIo) void {
+    trace(@src(), .{hwio.device});
+    hwio.header.unref();
 }
 
-export fn uacpi_kernel_io_map(port: uacpi.IoAddress, _: usize, _: *u16) callconv(cc) uacpi.uacpi_status {
-    trace(@src(), .{port});
-    return .unimplemented;
+export fn uacpi_kernel_io_map(base: u64, len: usize, out_hwio: **HardwareIo) callconv(cc) uacpi.uacpi_status {
+    trace(@src(), .{ base, len });
+    out_hwio.* = HardwareIo.fromInternal(.{
+        .systemio = .{
+            .base = base,
+            .length = len,
+        },
+    }) catch return .out_of_memory;
+    return .ok;
 }
 
-export fn uacpi_kernel_io_unmap(_: *u16) callconv(cc) uacpi.uacpi_status {
-    trace(@src(), .{});
-    return .unimplemented;
+export fn uacpi_kernel_io_unmap(hwio: *HardwareIo) callconv(cc) uacpi.uacpi_status {
+    trace(@src(), .{hwio.device});
+    hwio.header.unref();
+    return .ok;
 }
 
-export fn uacpi_kernel_get_thread_id() callconv(cc) ?*anyopaque {
+// TODO: override arch helper so we no longer just an extra 32-bits.
+pub const uacpi_thread_id = packed struct(u64) {
+    id: Thread.Id,
+    _: u32 = 0,
+};
+
+export fn uacpi_kernel_get_thread_id() callconv(cc) uacpi_thread_id {
     trace(@src(), .{});
-    return null;
+    const currentThread = kpcb.current().scheduler.getCurrentThread() orelse return .{
+        .id = .{ .uint = 0 },
+    };
+    return .{ .id = currentThread.id };
 }
 
 export fn uacpi_kernel_get_nanoseconds_since_boot() callconv(cc) u64 {
     trace(@src(), .{});
+    // todo
     return 0;
 }
 
 export fn uacpi_kernel_stall(usec: u8) callconv(cc) void {
+    // todo
     trace(@src(), .{usec});
 }
 
 export fn uacpi_kernel_sleep(msec: u64) callconv(cc) void {
+    // todo
     trace(@src(), .{msec});
 }
 
@@ -162,7 +198,8 @@ export fn uacpi_kernel_uninstall_interrupt_handler(_: uacpi.InterruptHandler, _:
 
 export fn uacpi_kernel_create_spinlock() callconv(cc) ?*anyopaque {
     trace(@src(), .{});
-    
+
+
     return @ptrCast(&__dummy);
 }
 

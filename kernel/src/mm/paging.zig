@@ -11,6 +11,7 @@ const log = std.log.scoped(.paging);
 pub const RECURSIVE_ENTRY_INDEX = 510;
 
 pub const PhysicalAddress = packed union {
+    ptr: [*]u8,
     uint: u64,
     split: packed struct(u64) {
         pageoffset: u12 = 0,
@@ -70,13 +71,33 @@ pub const VirtualAddress = packed union {
             _,
         } = .recursive_page_tables,
 
-        pub fn ptr(self: *@This()) *pte.Pte {
+        pub fn ptr(self: @This()) *pte.Pte {
             if (self.addressspace != .recursive_page_tables) @panic("pte pointer outside of recursive page tables");
-            const vaddr = @as(VirtualAddress, @bitCast(self.*));
+            const vaddr = @as(VirtualAddress, @bitCast(self));
 
             return @ptrCast(@alignCast(vaddr.ptr));
         }
     },
+
+    pub fn getPfi(self: VirtualAddress) Pfi {
+        return .{
+            .kernel = self.split.addressspace == .kernel,
+            .pml4_index = self.split.pml4_index,
+            .pdp_index = self.split.pdp_index,
+            .pd_index = self.split.pd_index,
+            .pt_index = self.split.pt_index,
+        };
+    }
+
+    pub fn getPte(self: VirtualAddress) *pte.Pte {
+        const pteaddr: VirtualAddress = .{
+            .pte = .{
+                .pfi = self.getPfi(),
+            },
+        };
+
+        return pteaddr.pte.ptr();
+    }
 
     pub fn of(ptr: anytype) VirtualAddress {
         comptime if (@typeInfo(@TypeOf(ptr)) != .pointer) @compileError(std.fmt.comptimePrint(

@@ -28,13 +28,11 @@ pub const WriteToken = struct {
     __internal_do_not_use_directly_otherwise_ub__: void,
 
     pub fn release(self: WriteToken) void {
-        log.debug("token released", .{});
         unlock(self);
     }
 };
 
 pub fn lock() WriteToken {
-    log.debug("pfmdb locked", .{});
     global_lock.lock();
     return .{ .__internal_do_not_use_directly_otherwise_ub__ = undefined };
 }

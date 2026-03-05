@@ -164,25 +164,20 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
 
     asm volatile ("int $0x20");
 
+    syspte.init() catch unreachable;
+
     var r: u64 = 0;
     std.mem.doNotOptimizeAway(@import("acpi/shims.zig").uacpi_kernel_get_rsdp(&r));
 
-    const early_tlb_buffer = heap.allocator.alloc(u8, 0x2000) catch unreachable;
-
-    uacpi.setup_early_table_access(early_tlb_buffer) catch unreachable;
-
-    log.debug("FADT = {any}", .{uacpi.tables.table_fadt()});
-
     kpcb.current().scheduler.init() catch unreachable;
-    apic.init() catch unreachable;
-
-    syspte.init() catch unreachable;
+  //  apic.init() catch unreachable;
 
     log.info("temporary mapping virtaddr: {any}", .{mm.map(
         .{ .uint = 0xAAAA0000 },
         32,
         .{},
     )});
+
     uacpi.initialize(.{}) catch unreachable;
 
     arch.halt_cpu();
@@ -201,8 +196,8 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
         0x2000,
     ) catch unreachable;
 
-    klog.debug("first tid = {any}", .{thread.id});
-    klog.debug("second tid = {any}", .{thread2.id});
+    klog.debug("first tid = {any}", .{thread.id.uint});
+    klog.debug("second tid = {any}", .{thread2.id.uint});
 
     kpcb.current().scheduler.queueThread(thread);
     kpcb.current().scheduler.queueThread(thread2);

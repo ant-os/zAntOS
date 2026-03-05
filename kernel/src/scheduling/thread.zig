@@ -18,11 +18,19 @@ pub const State = enum(u8) {
     _,
 };
 
+pub const Id = packed union {
+    uint: u32,
+    split: packed struct(u32) {
+        process: u16,
+        thread: u16,
+    },
+};
+
 // just for debugging rn this is fine as we know we will not be multi-core for now.
-var last_id: u32 = 0;
+var last_id: u16 = 0;
 
 header: ob.Header,
-id: u32,
+id: Id,
 state: State = .init,
 saved_context: ?Context = null,
 stack: ?[]u8 = null,
@@ -47,7 +55,12 @@ pub fn init(
         .id = allocId: {
             const id = last_id;
             last_id += 1;
-            break :allocId id;
+            break :allocId .{
+                .split = .{
+                    .process = 0,
+                    .thread = id,
+                },
+            };
         },
         .node = .{},
         .state = .init,
