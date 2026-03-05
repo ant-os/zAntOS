@@ -17,6 +17,31 @@ pub inline fn outb(port: u16, value: u8) void {
     );
 }
 
+pub fn readAny(comptime T: type, port: u16) T {
+    switch (T) {
+        u8, u16, u32, u64 => {},
+        else => @compileError("unsupport value type"),
+    }
+
+    return asm volatile ("in %[port], %[result]"
+        : [result] "={al},={ax},={eax}" (-> T),
+        : [port] "N{dx}" (port),
+        : .{ .memory = true });
+}
+
+pub fn writeAny(comptime T: type, port: u16, value: T) void {
+    switch (T) {
+        u8, u16, u32, u64 => {},
+        else => @compileError("unsupport value type"),
+    }
+
+    asm volatile ("out %[value], %[port]"
+        :
+        : [value] "{al},{ax},{eax}" (value),
+          [port] "N{dx}" (port),
+        : .{ .memory = true });
+}
+
 pub const DirectPortIO = struct {
     port: u16,
 

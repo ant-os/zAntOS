@@ -153,6 +153,7 @@ pub fn build(b: *Build) !void {
     qemu.addArgs(&.{ "-bios", ovmfPath });
     qemu.addArgs(&.{ "-hda", imagePath });
     qemu.addArgs(&.{ "-d", qemuDebug });
+    qemu.addArgs(&.{"-machine", "q35"});
     if (qemuNographic) qemu.addArg("-nographic");
     if (qemuNoreboot) qemu.addArg( "-no-reboot");
     qemu.addArgs(&.{ "-m", "1G" });

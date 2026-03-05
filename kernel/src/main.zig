@@ -23,6 +23,7 @@ const bootloader = @import("bootloader.zig");
 
 const zuacpi_bind = @import("acpi/zuacpi.zig");
 const uacpi = @import("zuacpi").uacpi;
+const pci = @import("pci.zig");
 
 const irql = @import("interrupts/irql.zig");
 const interrupts = @import("interrupts.zig");
@@ -179,6 +180,14 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     )});
 
     uacpi.initialize(.{}) catch unreachable;
+    pci.init() catch unreachable;
+    // uacpi.namespace.get_root().for_each_child_simple(&struct {
+    //     pub fn call(_: ?*anyopaque, node: *uacpi.namespace.NamespaceNode, depth: u32) callconv(.c) uacpi.namespace.IterationDecision {
+    //         log.info("{d}, node {s} of type {any}", .{depth, node.generate_absolute_path() orelse "<???>", node.node_type()});
+    //         return .@"continue";
+    //     }
+    // }.call, null) catch unreachable;
+    
 
     arch.halt_cpu();
 
