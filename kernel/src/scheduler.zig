@@ -18,12 +18,18 @@ current_thread: ?*Thread = null,
 idle_thread: ?*Thread = null,
 local_lock: IrqSafeSpinlock = .init,
 ready_queue: std.DoublyLinkedList = .{},
+enabled: bool = false,
+
+pub fn setEnabled(self: *Scheduler, v: bool) void {
+    self.enabled = v;
+}
 
 pub fn getCurrentThread(self: *Scheduler) ?*Thread {
     return self.current_thread;
 }
 
 pub fn schedule(self: *Scheduler, frame: *TrapFrame) void {
+    if (!self.enabled) return;
     irql.assertLessOrEqual(.dispatch);
 
     // early return in nested interrupts
@@ -37,7 +43,7 @@ pub fn schedule(self: *Scheduler, frame: *TrapFrame) void {
 
     const next = self.popNextThread() orelse if (self.force_yield) self.idle_thread.? else return;
     self.internalSwitchToThread(next, frame);
-}   
+}
 
 fn internalSwitchToThread(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
     if (self.current_thread) |current| {
@@ -66,11 +72,19 @@ pub fn popNextThread(self: *Scheduler) ?*Thread {
     return @fieldParentPtr("node", node);
 }
 
+pub fn setIdleThread(idle: *Thread) void {
+    kpcb.current().scheduler.idle_thread = idle;
+}
+
 pub fn queueThreadNoLock(self: *Scheduler, thread: *Thread) void {
-    std.debug.assert(thread.state == .init);
+    std.debug.assert(thread.state == .created);
 
     thread.state = .ready;
     self.ready_queue.append(&thread.node);
+}
+
+pub fn registerNewReadyThread(thread: *Thread) void {
+    kpcb.current().scheduler.queueThread(thread);
 }
 
 pub fn queueThread(self: *Scheduler, thread: *Thread) void {
@@ -81,13 +95,7 @@ pub fn queueThread(self: *Scheduler, thread: *Thread) void {
 }
 
 pub fn init(self: *Scheduler) !void {
-    const idle = Scheduler.Thread.init(
-        &__thread_idle,
-        null,
-        0x2000,
-    ) catch unreachable;
-
-    self.idle_thread = idle;
+    _ = self;
 }
 
 pub fn yield() void {
@@ -95,7 +103,7 @@ pub fn yield() void {
     asm volatile ("int $0x20");
 }
 
-export fn __thread_idle(_: ?*anyopaque) callconv(arch.cc) noreturn {
+pub export fn __thread_idle(_: ?*anyopaque) callconv(arch.cc) noreturn {
     log.info("running idle thread...", .{});
     while (true) {
         std.atomic.spinLoopHint();

@@ -33,6 +33,7 @@ const Device = @import("antkd/Device.zig");
 const Irp = @import("antkd/Irp.zig");
 
 const Scheduler = @import("scheduler.zig");
+const Process = @import("scheduling/process.zig");
 
 const apic = @import("apic.zig");
 
@@ -87,6 +88,45 @@ pub const panic = @import("panic.zig").__zig_panic_impl;
 
 pub const zuacpi_options: @import("zuacpi").Options = .{ .allocator = heap.allocator };
 
+export fn antkInitalizeSystem(_: ?*anyopaque) callconv(arch.cc_unaligned) noreturn {
+    klog.info("reached antkInitalizeSystem().", .{});
+    init() catch |e| std.debug.panic("init failed with error: {s}", .{@errorName(e)});
+    arch.halt_cpu();
+}
+
+pub noinline fn init() !void {
+    const log = klog;
+
+    var r: u64 = 0;
+    std.mem.doNotOptimizeAway(@import("acpi/shims.zig").uacpi_kernel_get_rsdp(&r));
+
+    //  apic.init() catch unreachable;
+
+    log.info("temporary mapping virtaddr: {any}", .{mm.map(
+        .{ .uint = 0xAAAA0000 },
+        32,
+        .{},
+    )});
+
+    try uacpi.initialize(.{});
+    try pci.init();
+
+    try testing_();
+
+    log.info("dumping info about the first process and it's threads.", .{});
+    try Process.initialSystemProcess.dump(logger.writer(), true);
+
+    // uacpi.namespace.get_root().for_each_child_simple(&struct {
+    //     pub fn call(_: ?*anyopaque, node: *uacpi.namespace.NamespaceNode, depth: u32) callconv(.c) uacpi.namespace.IterationDecision {
+    //         log.info("{d}, node {s} of type {any}", .{depth, node.generate_absolute_path() orelse "<???>", node.node_type()});
+    //         return .@"continue";
+    //     }
+    // }.call, null) catch unreachable;
+
+    if (@import("builtin").is_test) ktest.main() catch unreachable;
+    log.info("END", .{});
+}
+
 // Entry point, called by Loader
 export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn {
     // @setRuntimeSafety(false);
@@ -127,102 +167,39 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     pframe_alloc.init() catch unreachable;
     paging.init() catch unreachable;
     interrupts.init() catch unreachable;
-
-    const earlyPageAlloc = pframe_alloc.allocator(&pframe_alloc.AllocContext{
-        .map = pframe_alloc.defaultMapAssumeIdentity,
-        .translate = pframe_alloc.defaultTranslateAssumeIdentity,
-    });
-
-    var myarray = std.ArrayList(u32).empty;
-
-    myarray.append(earlyPageAlloc, 124) catch unreachable;
-
-    myarray.appendNTimes(earlyPageAlloc, 0xA, 12) catch unreachable;
-
-    log.debug("{any}", .{myarray});
-
-    _ = vmm;
-
     heap.init(32) catch unreachable;
-
-    pframe_alloc.dumpStats(logger.writer()) catch unreachable;
-
-    var mylock = irql.Lock.init;
-
-    log.debug("IRQL before block: {any}", .{irql.current()});
-
-    {
-        mylock.lock();
-        defer mylock.unlock();
-
-        // high-irql code
-        log.debug("IRQL in block: {any}", .{irql.current()});
-    }
-    log.debug("IRQL after block: {any}", .{irql.current()});
-
-    log.debug("irql = {any}", .{interrupts.connect(
-        &testcb,
-        null,
-        .dispatch,
-        .currentCpu(),
-    ) catch unreachable});
-
-    asm volatile ("int $0x20");
-
     syspte.init() catch unreachable;
-
-    var r: u64 = 0;
-    std.mem.doNotOptimizeAway(@import("acpi/shims.zig").uacpi_kernel_get_rsdp(&r));
-
     kpcb.current().scheduler.init() catch unreachable;
-    //  apic.init() catch unreachable;
 
-    log.info("temporary mapping virtaddr: {any}", .{mm.map(
-        .{ .uint = 0xAAAA0000 },
-        32,
-        .{},
-    )});
-
-    uacpi.initialize(.{}) catch unreachable;
-    pci.init() catch unreachable;
-
-    testing_() catch unreachable;
-
-    // uacpi.namespace.get_root().for_each_child_simple(&struct {
-    //     pub fn call(_: ?*anyopaque, node: *uacpi.namespace.NamespaceNode, depth: u32) callconv(.c) uacpi.namespace.IterationDecision {
-    //         log.info("{d}, node {s} of type {any}", .{depth, node.generate_absolute_path() orelse "<???>", node.node_type()});
-    //         return .@"continue";
-    //     }
-    // }.call, null) catch unreachable;
-
-    arch.halt_cpu();
-
-    log.info("trying to create thread", .{});
-
-    const thread = Scheduler.Thread.init(
-        &mythreadfunc,
+    _ = Process.createInitialSystemProcess() catch |e| std.debug.panic(
+        "failed to create initial system process: {s}",
+        .{@errorName(e)},
+    );
+    const idleThread = Process.initialSystemProcess.createThread(
+        &Scheduler.__thread_idle,
         null,
-        0x2000,
-    ) catch unreachable;
+    ) catch |e| std.debug.panic(
+        "failed to create idle thread: {s}",
+        .{@errorName(e)},
+    );
+    idleThread.name = "Idle";
+    idleThread.state = .ready;
+    Scheduler.setIdleThread(idleThread);
 
-    const thread2 = Scheduler.Thread.init(
-        &mythreadfunc,
+    // finally enable the scheduler on the BSP(current core).
+    kpcb.current().scheduler.setEnabled(true);
+
+    const initThread = Process.initialSystemProcess.spawnThread(
+        antkInitalizeSystem,
         null,
-        0x2000,
-    ) catch unreachable;
-
-    klog.debug("first tid = {any}", .{thread.id.uint});
-    klog.debug("second tid = {any}", .{thread2.id.uint});
-
-    kpcb.current().scheduler.queueThread(thread);
-    kpcb.current().scheduler.queueThread(thread2);
+    ) catch |e| std.debug.panic(
+        "failed to spawn stage2 init thread: {s}",
+        .{@errorName(e)},
+    );
+    initThread.name = "Init";
 
     Scheduler.yield();
-
-    if (@import("builtin").is_test) ktest.main() catch unreachable;
-    logger.println("END", .{}) catch unreachable;
-
-    arch.halt_cpu();
+    unreachable;
 }
 
 pub fn testing_() !void {

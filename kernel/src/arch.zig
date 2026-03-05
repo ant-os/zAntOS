@@ -1,8 +1,14 @@
 const std = @import("std");
 
 pub const MAX_SUPPORTED_CORES = 255;
-pub const cc = std.builtin.CallingConvention{ .x86_64_sysv = .{} };
-
+pub const cc = std.builtin.CallingConvention{
+    .x86_64_sysv = .{},
+};
+pub const cc_unaligned = std.builtin.CallingConvention{
+    .x86_64_sysv = .{
+        .incoming_stack_alignment = 1,
+    },
+};
 
 pub fn halt_cpu() noreturn {
     while (true) {
@@ -26,25 +32,23 @@ pub const Msr = enum(u32) {
         asm volatile (
             \\rdmsr
             : [low] "={rax}" (low),
-              [high] "={rdx}" (high)
+              [high] "={rdx}" (high),
             : [msr] "{rcx}" (@intFromEnum(self)),
-            
         );
 
-        return (high << 32) | low; 
+        return (high << 32) | low;
     }
 
-    pub fn write(self: Msr, value: u64) void{
+    pub fn write(self: Msr, value: u64) void {
         asm volatile (
             \\wrmsr
             :
             : [low] "{rax}" (value),
               [high] "{rdx}" (value >> 32),
-              [msr] "{rcx}" (@intFromEnum(self))
+              [msr] "{rcx}" (@intFromEnum(self)),
         );
     }
 };
-
 
 pub fn numcores() usize {
     return 1;

@@ -7,9 +7,11 @@ pub const Context = @import("context.zig");
 pub const StartFunc = fn (?*anyopaque) callconv(arch.cc) noreturn;
 
 const Thread = @This();
+const Process = @import("process.zig");
 
 pub const State = enum(u8) {
-    init = 0,
+    invalid = 0,
+    created,
     ready,
     running,
     waiting,
@@ -21,58 +23,55 @@ pub const State = enum(u8) {
 pub const Id = packed union {
     uint: u32,
     split: packed struct(u32) {
-        process: u16,
         thread: u16,
+        process: u16,
     },
 };
 
-// just for debugging rn this is fine as we know we will not be multi-core for now.
-var last_id: u16 = 0;
-
-header: ob.Header,
+header: ob.Header = .{
+    .type = .thread,
+    .vtable = .{
+        .deinit = &ob_deinit,
+    },
+},
 id: Id,
-state: State = .init,
+process: *Process,
+name: ?[]const u8 = null,
+state: State = .invalid,
 saved_context: ?Context = null,
 stack: ?[]u8 = null,
 node: std.DoublyLinkedList.Node = .{},
 
-pub fn init(
-    func: *const StartFunc,
-    context: ?*anyopaque,
-    stacksize: usize,
+pub fn internalCreateNoAttach(
+    parent: *Process,
+    stack: []u8,
+    initial_context: ?Context,
 ) !*Thread {
     const self = try heap.allocator.create(Thread);
-    const stack = try initStack(heap.allocator, stacksize);
     self.* = .{
-        .header = .{
-            .type = .thread,
-            .vtable = .{
-                .deinit = &ob_deinit,
+        .id = .{
+            .split = .{
+                .process = parent.id,
+                .thread = parent.threads.number.fetchAdd(1, .monotonic),
             },
         },
+        .process = parent,
+        .saved_context = initial_context,
         .stack = stack,
-        .saved_context = .new(func, context, stack),
-        .id = allocId: {
-            const id = last_id;
-            last_id += 1;
-            break :allocId .{
-                .split = .{
-                    .process = 0,
-                    .thread = id,
-                },
-            };
-        },
-        .node = .{},
-        .state = .init,
     };
 
     return self;
 }
 
 pub noinline fn initStack(alloc: std.mem.Allocator, size: usize) ![]u8 {
-    const stack = try alloc.alloc(u8, size);
+    const stack = try alloc.alignedAlloc(u8, .fromByteUnits(16), size);
     @memset(stack, 0x0);
     return stack;
+}
+
+pub fn printIdent(self: *Thread, w: *std.Io.Writer) !void {
+    try w.print("Tid {d}", .{self.id.uint});
+    if (self.name != null) try w.print(" ('{s}')", .{self.name.?});
 }
 
 pub fn ob_deinit(hdr: *ob.Header) void {
