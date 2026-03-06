@@ -63,7 +63,7 @@ pub fn createInitialSystemProcess() !*Process {
         .name = "NULL",
         .process = self,
         .saved_context = null,
-        .state = .invalid,
+        .state = .init(.invalid),
     };
 
     self.* = .{
@@ -91,9 +91,17 @@ pub fn printIdent(self: *Process, w: *std.Io.Writer) !void {
     if (self.name != null) try w.print(" ('{s}')", .{self.name.?});
 }
 
+pub fn getState(self: *const Process) State {
+    return self.state;
+}
+
+pub fn setState(self: *const Process, state: State) void{
+    self.state = state;
+}
+
 pub fn dump(self: *Process, w: *std.Io.Writer, printLegend: bool) !void {
     if (printLegend) try w.writeAll("Syntax: {state}, {identifier}, Parent {parent process}, {number of threads} Threads\r\n");
-    try w.print("{s}, ", .{@tagName(self.state)});
+    try w.print("{s}, ", .{@tagName(self.getState())});
     try self.printIdent(w);
     try w.writeAll(", Parent ");
     if (self.parent != null) try self.parent.?.process.printIdent(w) else try w.writeAll("<none>");
@@ -106,7 +114,7 @@ pub fn dump(self: *Process, w: *std.Io.Writer, printLegend: bool) !void {
         const thread: *Thread = @fieldParentPtr("node", node.?);
         std.log.debug("0x{x}", .{@intFromPtr(thread)});
 
-        try w.print("\t{d}: {s}, ", .{ count, @tagName(thread.state) });
+        try w.print("\t{d}: {s}, ", .{ count, @tagName(thread.getState()) });
         try thread.printIdent(w);
         try w.writeAll("\r\n");
 
@@ -133,7 +141,7 @@ pub fn createThread(
         .new(func, ctx, stack),
     );
     self.threads.list.append(&thread.node);
-    thread.state = .created;
+    thread.state.store(.created, .seq_cst);
 
     return thread;
 }

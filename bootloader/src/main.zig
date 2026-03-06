@@ -287,8 +287,6 @@ pub fn allocatePages(pages: usize, ty: uefi.tables.MemoryType) ![]u8 {
 }
 
 pub fn installMapping(virtual: VirtualAddress, physical: u64, attrs: PageAttributes) !void {
-
-
     if (pml4 == null) pml4 = try allocPageTable();
 
     const pdp = try pml4.?[virtual.pml4].getOrCreateTable();
@@ -415,10 +413,49 @@ const Gib = (1024 * 1024 * 1024);
 const Mib = (1024 * 1024);
 const @"16GiB" = 16 * Gib;
 
+pub inline fn tscRead() u64 {
+    return asm volatile (
+        \\rdtsc
+        \\shlq $32, %%rdx
+        \\orq %%rdx, %%rax
+        : [ret] "={rax}" (-> u64),
+        :
+        : .{ .rdx = true, .rax = true });
+}
+
+pub inline fn magicTscCalibrate() u64 {
+    return asm volatile (
+        \\rdtsc
+        \\lfence
+        \\shlq $32, %%rdx
+        \\orq %%rdx, %%rax
+        : [ret] "={rax}" (-> u64),
+        :
+        : .{ .memory = true, .rdx = true, .rax = true });
+}
+
+/// attempts to calibrate the tsc and return the nanoseconds per cycle.
+pub fn calibrateTsc() u64 {
+    @setRuntimeSafety(false);
+
+
+    var cycles_per_ns: u64 = 0;
+    const before = @call(.always_inline, tscRead, .{});
+    _ = efiBootServices()._stall(1);
+    cycles_per_ns = @call(.always_inline, tscRead, .{});
+    cycles_per_ns -= before;
+    cycles_per_ns /= 5;
+    return cycles_per_ns;
+}
+
 pub fn main() uefi.Error!void {
     asm volatile ("cli");
     var arena: std.heap.ArenaAllocator = .init(uefi.pool_allocator);
     const alloc = arena.allocator();
+
+
+    const ns_per_cycle = calibrateTsc();
+    log.info("ns per cpu cycle: {d}", .{ns_per_cycle});
 
     var install = getFirstOsInstall() catch |e| {
         log.err("failed to discover os installation: {s}", .{@errorName(e)});
@@ -530,7 +567,7 @@ pub fn main() uefi.Error!void {
             AntLoadedKernelMemory,
             pages,
         ));
-        
+
         @memset(backingMemory, 0);
         @memcpy(backingMemory.ptr, data);
 
@@ -633,7 +670,6 @@ pub fn main() uefi.Error!void {
     ) catch return error.OutOfResources;
     const mmap = try efiBootServices().getMemoryMap(mmapBuffer);
 
-    
     bootinfo.* = .{
         .size = @sizeOf(BootInfo),
         .kernel_image = .{
@@ -649,10 +685,10 @@ pub fn main() uefi.Error!void {
         },
         .acpi_ptr = acpi_ptr,
         .efi_ptr = uefi.system_table,
+        .ns_per_cycle = ns_per_cycle,
     };
 
     try efiBootServices().exitBootServices(uefi.handle, mmap.info.key);
-
 
     // !! NO PRINT AFTER THIS POINT !! //
 
@@ -714,4 +750,5 @@ pub const BootInfo = extern struct {
 
     acpi_ptr: ?*anyopaque,
     efi_ptr: *uefi.tables.SystemTable,
+    ns_per_cycle: u64,
 };

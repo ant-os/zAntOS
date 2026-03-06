@@ -18,9 +18,18 @@ pub const State = enum(u8) {
     suspended,
     terminated,
     _,
+
+    pub fn isSchedulable(self: State) bool {
+        return switch (self) {
+            .invalid => @panic("thread has invalid state"),
+            .running, .ready, .waiting, .suspended => true,
+            else => false,
+        };
+    }
 };
 
 pub const Id = packed union {
+    pub const @"null": Id = .{ .uint = 0 };
     uint: u32,
     split: packed struct(u32) {
         thread: u16,
@@ -37,10 +46,23 @@ header: ob.Header = .{
 id: Id,
 process: *Process,
 name: ?[]const u8 = null,
-state: State = .invalid,
+state: std.atomic.Value(State) = .init(.invalid),
 saved_context: ?Context = null,
 stack: ?[]u8 = null,
 node: std.DoublyLinkedList.Node = .{},
+queue_node: std.DoublyLinkedList.Node = .{},
+
+pub fn swapState(self: *Thread, state: State) State {
+    return self.state.swap(state, .seq_cst);
+}
+
+pub fn setState(self: *Thread, state: State) void {
+    self.state.store(state, .seq_cst);
+}
+
+pub fn getState(self: *const Thread) State {
+    return self.state.load(.seq_cst);
+}
 
 pub fn internalCreateNoAttach(
     parent: *Process,
@@ -79,7 +101,7 @@ pub fn ob_deinit(hdr: *ob.Header) void {
 
     const self: *Thread = @fieldParentPtr("header", hdr);
 
-    std.debug.assert(self.state != .running);
+    std.debug.assert(self.getState() != .running);
 
     heap.allocator.free(self.stack.?);
     heap.allocator.destroy(self);

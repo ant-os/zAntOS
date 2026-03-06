@@ -35,7 +35,11 @@ const Irp = @import("antkd/Irp.zig");
 const Scheduler = @import("scheduler.zig");
 const Process = @import("scheduling/process.zig");
 
+const Mutex = @import("sync/Mutex.zig");
+
 const apic = @import("apic.zig");
+const tsc = @import("tsc.zig"); 
+const cpuid = @import("cpuid.zig");
 
 //const heap = @import("heap.zig");
 const antstatus = @import("status.zig");
@@ -112,6 +116,14 @@ pub noinline fn init() !void {
     try pci.init();
 
     try testing_();
+    
+    //const mymutex = try Mutex.new();
+
+    
+    log.info("{any}", .{cpuid.cpuid(cpuid.hypervisor_id)});
+
+    const res = cpuid.cpuid(cpuid.freq_2);
+    log.info("{any}", .{res});
 
     log.info("dumping info about the first process and it's threads.", .{});
     try Process.initialSystemProcess.dump(logger.writer(), true);
@@ -183,7 +195,7 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
         .{@errorName(e)},
     );
     idleThread.name = "Idle";
-    idleThread.state = .ready;
+    idleThread.setState(.ready);
     Scheduler.setIdleThread(idleThread);
 
     // finally enable the scheduler on the BSP(current core).
