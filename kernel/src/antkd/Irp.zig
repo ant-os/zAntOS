@@ -3,22 +3,15 @@
 const std = @import("std");
 const ob = @import("../ob/object.zig");
 const heap = @import("../mm/heap.zig");
+const function = @import("function.zig");
 
 const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
 const Driver = @import("Driver.zig");
 const Device = @import("Device.zig");
 const Irp = @This();
 
-pub const MAX_MAJOR_FUNCTIONS = 16;
-
-pub const MajorFunction = union(enum(u8)) {
-    pub const Tag = std.meta.Tag(MajorFunction);
-    pub const Payload = anyopaque;
-
-    unused: void = 0,
-    enumerate: extern struct {} = 1,
-    example: extern struct { a: usize } = 0xA,
-};
+pub const MAX_MAJOR_FUNCTIONS = function.MAX_MAJOR_FUNCTIONS;
+pub const MajorFunction = function.MajorFunction;
 
 pub const Status = enum(u8) {
     init,
@@ -39,13 +32,10 @@ pub const StackEntry = struct {
     driver_override: ?*Driver = null,
     device: *Device,
     context: ?*anyopaque = null,
-    completion: union(enum) {
-        ignored: void,
-        callback: extern struct { 
-            func: *const fn(*Irp, *StackEntry, ?*anyopaque) callconv(.c) void,
-            context: ?*anyopaque = null,
-        }
-    } = .ignored,
+    completion: union(enum) { ignored: void, callback: extern struct {
+        func: *const fn (*Irp, *StackEntry, ?*anyopaque) callconv(.c) void,
+        context: ?*anyopaque = null,
+    } } = .ignored,
 
     pub fn execute(self: *StackEntry, irp: *Irp) anyerror!void {
         const driver = if (self.driver_override) |drv| drv else self.device.driver orelse return;
@@ -92,7 +82,7 @@ pub fn addEntry(self: *Irp, device: *Device, func: MajorFunction, context: ?*any
     self.stack.append(&entry.node);
     self.stack_size += 1;
 
-    if(self.status == .init) self.status = .pending;
+    if (self.status == .init) self.status = .pending;
 }
 
 pub inline fn currentEntry(self: *Irp) ?*StackEntry {
@@ -105,9 +95,12 @@ pub fn executeSingle(self: *Irp) ?(anyerror!void) {
 
     if (self.stack_index >= self.stack_size) return null;
 
-    if (self.current_entry == null) self.current_entry = @fieldParentPtr("node", self.stack.first orelse return null);
+    if (self.current_entry == null) self.current_entry = @fieldParentPtr(
+        "node",
+        self.stack.first orelse return null,
+    );
     if (self.current_entry) |ent| {
-        ent.execute(self) catch |e|{
+        ent.execute(self) catch |e| {
             ent.err = e;
             self.stack_index += 1;
             return e;
