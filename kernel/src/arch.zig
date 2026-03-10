@@ -21,6 +21,7 @@ pub inline fn isCanonical(addr: usize) bool {
 }
 
 pub const Msr = enum(u32) {
+    apic_base = 0x1B,
     fs_base = 0xC000_0100,
     gs_base = 0xC000_0101,
     kernel_gs_base = 0xC000_0102,

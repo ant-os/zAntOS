@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-const SpinLock = @import("spin_lock.zig").SpinLock;
+const SpinLock = @import("../interrupts/irql.zig").Lock;
 const Thread = @import("../scheduling/thread.zig");
 const Scheduler = @import("../scheduler.zig");
 
@@ -32,7 +32,7 @@ pub fn Embedded(comptime T: type, comptime field_name: []const u8) type {
     };
 }
 
-lock: SpinLock = .{},
+lock: SpinLock = .init,
 waiter_queue: std.DoublyLinkedList = .{},
 pollFn: *const fn (*Awaitable, *Thread) anyerror!bool,
 
@@ -42,21 +42,21 @@ pub fn parkThreadNoLock(self: *Awaitable, thread: *Thread) void {
 }
 
 pub fn parkThreadNoYield(self: *Awaitable, thread: *Thread) void {
-    self.lock.lock();
+    self.lock.lockAt(.deferred);
     defer self.lock.unlock();
 
     self.parkThreadNoLock(thread);
 }
 
 pub fn wakeSingle(self: *Awaitable) bool {
-    self.lock.lock();
+    self.lock.lockAt(.deferred);
     defer self.lock.unlock();
 
     return self.wakeSingleNoLock();
 }
 
 pub fn wakeSingleNoLock(self: *Awaitable) bool {
-    if (self.waiter_queue.first == null) return;
+    if (self.waiter_queue.first == null) return false;
     if (self.waiter_queue.popFirst()) |thnode| {
         const thread: *Thread = @fieldParentPtr("queue_node", thnode);
         Scheduler.localNoLocks().queueThread(thread);

@@ -51,6 +51,7 @@ saved_context: ?Context = null,
 stack: ?[]u8 = null,
 node: std.DoublyLinkedList.Node = .{},
 queue_node: std.DoublyLinkedList.Node = .{},
+quatum: u64 = 0,
 
 pub fn swapState(self: *Thread, state: State) State {
     return self.state.swap(state, .seq_cst);

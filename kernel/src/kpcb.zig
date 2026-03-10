@@ -21,7 +21,7 @@ self: *KPCB = undefined,
 
 canary: u32 = CANARY,
 testdummy: if (builtin.is_test) u32 else void,
-lapic_index: u8,
+lapic: LocalApic,
 
 debug_interrupt_count: u8,
 exception_depth: u8,

@@ -38,6 +38,7 @@ const Process = @import("scheduling/process.zig");
 
 const Mutex = @import("sync/Mutex.zig");
 
+const pic = @import("pic.zig");
 const apic = @import("apic.zig");
 const tsc = @import("tsc.zig");
 const cpuid = @import("cpuid.zig");
@@ -136,6 +137,32 @@ pub noinline fn init() !void {
 
     try uacpi.initialize(.{});
     try pci.init();
+    pic.remapAndDisable();
+    try apic.init();
+
+    const localTimerIrq = try interrupts.create(.clock);
+
+    var initLock = irql.Lock.init;
+
+    {
+        initLock.lockAt(.sync);
+        defer initLock.unlock();
+
+        apic.LocalApic.writeRawRegister(u32, 0x3E0, 0x2);
+        apic.LocalApic.writeRawRegister(u32, 0x380, std.math.maxInt(u32));
+
+        apic.LocalApic.writeRawRegister(apic.LocalApic.LvtEntry, @intFromEnum(apic.LocalApic.LvtIndex.timer), apic.LocalApic.LvtEntry{
+            .masked = true,
+            .vector = 0x00,
+            .mode = .{ .timer = .periodic },
+            .trigger_mode = .edge,
+        });
+
+        localTimerIrq.attach(&handleLapicTimer, null);
+        try localTimerIrq.bindAndConnectLocal(.timer);
+
+        asm volatile ("sti");
+    }
 
     try testing_();
 
@@ -147,11 +174,6 @@ pub noinline fn init() !void {
     const fadt = try uacpi.tables.table_fadt();
     log.info("reset reg: {any}, reset value: {any}", .{ fadt.reset_reg, fadt.reset_value });
     // try gasWrite(u8, fadt.reset_reg, fadt.reset_value);
-
-    tsc.init() catch unreachable;
-
-    // stall for 8 seconds.
-    tsc.stall(8 * 1000 * 1000);
 
     log.info("dumping info about the first process and it's threads.", .{});
     try Process.initialSystemProcess.dump(logger.writer(), true);
@@ -165,6 +187,15 @@ pub noinline fn init() !void {
 
     if (@import("builtin").is_test) ktest.main() catch unreachable;
     log.info("END", .{});
+}
+
+fn handleDispatch(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
+    kpcb.current().scheduler.yield_ = true;
+    return true;
+}
+
+fn handleLapicTimer(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
+    return true;
 }
 
 // Entry point, called by Loader
@@ -209,6 +240,7 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     interrupts.init() catch unreachable;
     heap.init(32) catch unreachable;
     syspte.init() catch unreachable;
+    tsc.init() catch unreachable;
     kpcb.current().scheduler.init() catch unreachable;
 
     _ = Process.createInitialSystemProcess() catch |e| std.debug.panic(
@@ -226,6 +258,16 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     idleThread.setState(.ready);
     Scheduler.setIdleThread(idleThread);
 
+    const dispatchIrq = interrupts.create(.dispatch) catch |e| std.debug.panic(
+        "failed to create dispatch interrupt: {s}",
+        .{@errorName(e)},
+    );
+    dispatchIrq.attach(&handleDispatch, null);
+    kpcb.current().irq_router.register(dispatchIrq) catch |e| std.debug.panic(
+        "failed to register dispatch interrupt: {s}",
+        .{@errorName(e)},
+    );
+
     // finally enable the scheduler on the BSP(current core).
     kpcb.current().scheduler.setEnabled(true);
 
@@ -238,8 +280,28 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
     );
     initThread.name = "Init";
 
-    Scheduler.yield();
+    asm volatile ("int $0x20");
     unreachable;
+}
+
+var global_mutex: ?*Mutex = null;
+
+pub fn threadFunc(_: ?*anyopaque) callconv(.c) noreturn {
+    klog.info("Thread {d}: acquire(lock)", .{Scheduler.safeCurrentThreadId().uint});
+
+    global_mutex.?.lock() catch unreachable;
+
+    klog.info("Thread {d}: lock acquired", .{Scheduler.safeCurrentThreadId().uint});
+
+    tsc.stall(10000);
+
+    global_mutex.?.unlock();
+
+    klog.info("Thread {d}: lock released", .{Scheduler.safeCurrentThreadId().uint});
+
+    while (true) {
+        std.atomic.spinLoopHint();
+    }
 }
 
 pub fn testing_() !void {
@@ -272,6 +334,33 @@ pub fn testing_() !void {
     );
 
     klog.debug("{any} (expecting void)", .{irp.executeSingle()});
+
+
+
+    {
+        const oldIrql = irql.raise(.deferred);
+        defer irql.update(oldIrql);
+
+        const threadA = try Process.initialSystemProcess.spawnThread(threadFunc, null);
+        threadA.name = "Test";
+ 
+
+        global_mutex = try Mutex.new();
+        try global_mutex.?.lock();  
+
+            klog.info("testing mutex and scheduler... note: lock is owned by init but unlocking at idx=10", .{});
+
+    }
+
+
+    for (0..21) |i| {
+        tsc.stall(1000);
+        if (i == 10) global_mutex.?.unlock();
+        try logger.println("work work.... idx={d}", .{i});
+    }
+
+    asm volatile ("cli");
+    arch.halt_cpu();
 }
 
 export fn mythreadfunc(ctx: ?*anyopaque) callconv(arch.cc) noreturn {
@@ -286,7 +375,9 @@ export fn mythreadfunc(ctx: ?*anyopaque) callconv(arch.cc) noreturn {
 
     klog.info("now we are back after yield()...", .{});
 
-    arch.halt_cpu();
+    while (true) {
+        std.atomic.spinLoopHint();
+    }
 }
 
 fn testcb(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {

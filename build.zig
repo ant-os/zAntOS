@@ -154,7 +154,7 @@ pub fn build(b: *Build) !void {
     qemu.addArgs(&.{ "-hda", imagePath });
     qemu.addArgs(&.{ "-d", qemuDebug });
     qemu.addArgs(&.{"-machine", "q35"});
-    qemu.addArgs(&.{"-cpu", "Skylake-Client"});
+ //   qemu.addArgs(&.{"-cpu", "Skylake-Client"});
     if (qemuNographic) qemu.addArg("-nographic");
     if (qemuNoreboot) qemu.addArg( "-no-reboot");
     qemu.addArgs(&.{ "-m", "1G" });

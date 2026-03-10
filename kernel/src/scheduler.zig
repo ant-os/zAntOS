@@ -5,6 +5,8 @@ const kpcb = @import("kpcb.zig");
 const irql = @import("interrupts/irql.zig");
 const heap = @import("mm/heap.zig");
 const arch = @import("arch.zig");
+const tsc = @import("tsc.zig");
+const apic = @import("apic.zig");
 const TrapFrame = @import("interrupts.zig").TrapFrame;
 const IrqSafeSpinlock = @import("interrupts/irql.zig").Lock;
 pub const Thread = @import("scheduling/thread.zig");
@@ -14,11 +16,13 @@ const log = std.log.scoped(.scheduler);
 
 const Scheduler = @This();
 
-force_yield: bool = false,
+pending: bool = false,
+yield_: bool = false,
 current_thread: ?*Thread = null,
 idle_thread: ?*Thread = null,
 local_lock: IrqSafeSpinlock = .init,
 ready_queue: std.DoublyLinkedList = .{},
+last_schedule_time: u64 = 0,
 enabled: bool = false,
 
 pub fn setEnabled(self: *Scheduler, v: bool) void {
@@ -41,10 +45,37 @@ pub fn getCurrentThread(self: *Scheduler) ?*Thread {
     return self.current_thread;
 }
 
+pub fn safeCurrentThreadId() Thread.Id {
+    const oldIrql = irql.raise(.sync);
+    const id = if (kpcb.current().scheduler.current_thread) |th| th.id else Thread.Id.null;
+    irql.update(oldIrql);
+    return id;
+}
+
 /// NOTE: This also aquires execlusive acess to the local scheduler.
 pub fn currentThreadExclusive() ?*Thread {
     acquireExclusive();
     return localNoLocks().getCurrentThread();
+}
+
+pub fn setPendingInner(self: *Scheduler, v: bool) void {
+    self.pending = v;
+}
+
+fn interrupt_tail(self: *Scheduler, frame: *TrapFrame) void {
+    _ = frame;
+
+    const currentTime = tsc.read();
+    const diff = currentTime - self.last_schedule_time;
+    self.last_schedule_time = currentTime;
+    if (diff == currentTime) return self.setPendingInner(true);
+    if (self.getCurrentThread() == null) return self.setPendingInner(true);
+
+    const thread = self.getCurrentThread().?;
+
+    thread.quatum -|= diff;
+
+    return self.setPendingInner(thread.quatum == 0);
 }
 
 pub fn schedule(self: *Scheduler, frame: *TrapFrame) void {
@@ -56,15 +87,29 @@ pub fn schedule(self: *Scheduler, frame: *TrapFrame) void {
     // or if the thread is already holding the lock.
     if (self.local_lock.isLocked()) return;
 
-    // for now just use a simple spinlock.
     self.local_lock.lock();
     defer self.local_lock.unlock();
 
-    const next = self.popNextThread() orelse if (self.force_yield) self.idle_thread.? else return;
-    self.internalSwitchToThread(next, frame);
+    self.interrupt_tail(frame);
+
+    if (self.pending or self.yield_) {
+        const next = self.popNextThread() orelse if (self.yield_) self.idle_thread.? else {
+            self.pending = false;
+            return;
+        };
+        self.internalSwitchToThread(next, frame);
+        self.pending = false;
+        self.yield_ = false;
+    }
 }
 
 fn internalSwitchToThread(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
+    if (self.current_thread == thread) {
+        thread.quatum = 1000;
+        return;
+    }
+
+    log.debug("switching to thread with id {d} ('{s}'), preempted={any}", .{ thread.id.uint, thread.name orelse "<???>", frame.vector.raw != 0x20});
     if (self.current_thread) |current| {
         const oldState = current.swapState(.ready);
 
@@ -73,7 +118,6 @@ fn internalSwitchToThread(self: *Scheduler, thread: *Thread, frame: *TrapFrame) 
             if (oldState == .running) self.ready_queue.append(&current.node);
         }
     }
-
     self.setRunning(thread, frame);
 }
 
@@ -89,9 +133,8 @@ pub fn setRunning(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
     if (thread.saved_context == null) @panic("thread has no saved context");
     std.debug.assert(thread.swapState(.running) == .ready);
 
-    log.debug("switching to new thread with id {d}", .{thread.id.uint});
-
     thread.saved_context.?.applyToFrame(frame);
+    thread.quatum = 1000;
     self.current_thread = thread;
 }
 
@@ -108,7 +151,7 @@ pub fn queueThreadNoLock(self: *Scheduler, thread: *Thread) void {
     const oldState = thread.swapState(.ready);
     std.debug.assert(oldState == .created or oldState.isSchedulable());
 
-    self.ready_queue.append(&thread.node);
+    self.ready_queue.prepend(&thread.node);
 }
 
 pub fn registerNewReadyThread(thread: *Thread) void {
@@ -121,7 +164,7 @@ pub fn idleThreadId() Thread.Id {
 }
 
 pub fn queueThread(self: *Scheduler, thread: *Thread) void {
-    self.local_lock.lock();
+    self.local_lock.lockAt(.sync);
     defer self.local_lock.unlock();
 
     self.queueThreadNoLock(thread);
@@ -132,13 +175,20 @@ pub fn init(self: *Scheduler) !void {
 }
 
 pub fn yield() void {
-    // hardcoded software int for now lmao, later dyn self-ipi ig.
-    asm volatile ("int $0x20");
+    apic.send_ipi(.{
+        .vector = 0x20,
+        .delivery = .fixed,
+        .dest = @intCast(kpcb.local.lapic.id),
+        .dest_mode = .physical,
+        .shorthand = .self,
+        .trigger_mode = .edge,
+    });
 }
 
 pub export fn __thread_idle(_: ?*anyopaque) callconv(arch.cc) noreturn {
-    log.info("running idle thread...", .{});
     while (true) {
-        std.atomic.spinLoopHint();
+        log.info("idle...", .{});
+        tsc.stall(5000);
+        Scheduler.yield();
     }
 }

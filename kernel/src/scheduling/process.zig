@@ -112,13 +112,12 @@ pub fn dump(self: *Process, w: *std.Io.Writer, printLegend: bool) !void {
 
     while (node != null) {
         const thread: *Thread = @fieldParentPtr("node", node.?);
-        std.log.debug("0x{x}", .{@intFromPtr(thread)});
-
         try w.print("\t{d}: {s}, ", .{ count, @tagName(thread.getState()) });
         try thread.printIdent(w);
         try w.writeAll("\r\n");
 
         node = node.?.next;
+
         count += 1;
     }
 

@@ -7,7 +7,7 @@ const physmap = @import("../mm/physmap.zig");
 id: u32,
 enabled: bool,
 online_capable: bool,
-uid: u32,
+processor_uid: u32,
 
 pub var supports_eoi_broadcast_suppression: bool = false;
 
@@ -27,16 +27,16 @@ pub const ErrorStatusRegister = packed struct(u32) {
     send_illegal_vector: bool,
     recvd_illegal_vector: bool,
     illegal_register_address: bool,
-    _: u24,
+    _: u24 = 0,
 };
 
 pub const SpuriousInterrupt = packed struct(u32) {
     spurious_vector: u8,
     apic_software_enabled: bool,
     focus_processor_checking: bool,
-    _reserved1: u2,
+    _reserved1: u2 = 0,
     suppress_eoi_broadcast: bool,
-    _reserved2: u19,
+    _reserved2: u19 = 0,
 };
 
 pub const CommandRegister = packed struct(u64) {
@@ -60,21 +60,18 @@ pub const CommandRegister = packed struct(u64) {
 
 pub const LvtEntry = packed struct(u32) {
     vector: u8,
-    delivery: apic.DeliveryMode,
+    delivery_mode: apic.DeliveryMode = .fixed,
     _1: u1 = 0,
     pending: bool = false,
-    polarity: enum(u1) {
-        active_high = 0,
-        active_low = 1,
-    } = .active_high,
+    polarity: apic.Polarity = .active_high,
     remote_irr: bool = false,
     trigger_mode: apic.TriggerMode,
     masked: bool,
     mode: packed union {
+        unused: u2,
         timer: TimerMode,
-        reserved: u2,
-    } = .{ .reserved = 0 },
-    _2: u15 = 0,
+    },
+    _2: u13 = 0,
 };
 
 pub const LvtIndex = enum(u7) {
@@ -122,16 +119,26 @@ pub inline fn RegisterType(comptime reg: u7) type {
 
 const lapic_base: u64 = 0xFEE00000;
 
-pub fn read_register(comptime T: type, reg: u7) void {
+pub fn readRawRegister(comptime T: type, reg: u16) T {
     var bytes: [@sizeOf(T)]u8 = undefined;
-    const slice: []u32 = std.mem.bytesAsSlice(u32, &bytes);
+    const slice = std.mem.bytesAsSlice(u32, &bytes);
     for (slice, 0..) |*v, i| {
         const addr = lapic_base + ((reg + i) << 4);
         v.* = physmap.read(u32, addr);
     }
+    return std.mem.bytesToValue(T, &bytes);
+}
+ 
+pub inline fn writeRegister(comptime reg: RegisterId, value: RegisterType(@intFromEnum(reg))) void {
+    return writeRawRegister(RegisterType(@intFromEnum(reg)), @intFromEnum(reg), value);
 }
 
-pub fn write_register(comptime T: type, reg: u7, value: T) void {
+pub inline fn readRegister(comptime reg: RegisterId) RegisterType(@intFromEnum(reg)) {
+    return readRawRegister(RegisterType(@intFromEnum(reg)), @intFromEnum(reg));
+}
+
+
+pub fn writeRawRegister(comptime T: type, reg: u16, value: T) void {
     const bytes = std.mem.toBytes(value);
     for (std.mem.bytesAsSlice(u32, &bytes), 0..) |v, i| {
         const addr = lapic_base + ((reg + i) << 4);

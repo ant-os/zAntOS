@@ -1,6 +1,6 @@
 //! Simple Mutex Impl.
 //!
-//! This struct is just a single pointer to the actual mutex internal and should be passed by value.
+//! This struct should be passed by pointer and NOT copied.
 
 const std = @import("std");
 const heap = @import("../mm/heap.zig");
@@ -15,19 +15,35 @@ const Mutex = @This();
 awaitable: Awaitable = .{ .pollFn = &_pollThunk },
 owner: std.atomic.Value(u32) = .init(0),
 
-pub fn lock(self: *Mutex) void {
-    const thread = Scheduler.currentThread().?;
-    if (self.poll(thread) catch unreachable) return;
+pub fn lock(self: *Mutex) !void {
+    //self.awaitable.lock.lockAt(.sync);
+    const thread = Scheduler.currentThread().?;    
+    if (try self.poll(thread)) return;
+    thread.setState(.waiting);
+    defer thread.setState(.running);
 
     self.awaitable.parkThreadNoYield(thread);
+
+   // self.awaitable.lock.unlock();
+
     while (self.owner.load(.acquire) != thread.id.uint) {
         Scheduler.yield();
+        if (try self.poll(thread)) break;
     }
 }
 
 fn _pollThunk(awaitable: *Awaitable, thread: *Thread) anyerror!bool {
     const self: *Mutex = @fieldParentPtr("awaitable", awaitable);
     return self.poll(thread);
+}
+
+fn pollInner(self: *Mutex, thread_id: u32) anyerror!bool {
+    return self.owner.cmpxchgStrong(
+        0,
+        thread_id,
+        .acquire,
+        .monotonic,
+    ) == null;
 }
 
 pub fn poll(self: *Mutex, thread: *Thread) anyerror!bool {
@@ -40,8 +56,8 @@ pub fn poll(self: *Mutex, thread: *Thread) anyerror!bool {
 }
 
 pub fn unlock(self: *Mutex) void {
-    self.owner.store(.null, .release);
-    self.awaitable.wakeSingle();
+    self.owner.store(0, .release);
+    _ = self.awaitable.wakeSingleNoLock();
 }
 
 pub fn new() !*Mutex {

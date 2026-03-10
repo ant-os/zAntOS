@@ -30,7 +30,10 @@ pub const Irql = enum(u4) {
     }
 
     pub fn assertHigherOrEqual(self: Irql, irql: Irql) void {
-        if (irql.raw() < self.raw()) @panic("irql not higher or equal");
+        if (self.raw() < irql.raw()) std.debug.panic(
+            "irql not higher or equal: {s} < {s}",
+            .{ @tagName(self), @tagName(irql) },
+        );
     }
 
     pub fn assertEqual(self: Irql, irql: Irql) void {
@@ -68,7 +71,7 @@ pub inline fn assertEqual(irql: Irql) void {
 pub fn raise(irql: Irql) Irql {
     const old = current();
 
-    old.assertHigherOrEqual(irql);
+    assertLessOrEqual(irql);
 
     update(irql);
 
@@ -76,7 +79,6 @@ pub fn raise(irql: Irql) Irql {
 }
 
 pub const Lock = struct {
-    
     old_irql: ?Irql = null,
     spinlock: spinlock.SpinLock = .{},
 
@@ -118,4 +120,6 @@ pub const Lock = struct {
     }
 };
 
-comptime { std.testing.refAllDecls(Lock); }
+comptime {
+    std.testing.refAllDecls(Lock);
+}

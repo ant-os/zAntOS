@@ -10,6 +10,7 @@ const kpcb = @import("kpcb.zig");
 const ktest = @import("ktest.zig");
 const irql = @import("interrupts/irql.zig");
 const heap = @import("mm/heap.zig");
+const apic = @import("apic.zig");
 
 pub const Exception = enum(u8) {
     devide_error = 0,
@@ -120,7 +121,7 @@ pub noinline fn handle_localirq(frame: *TrapFrame) bool {
 }
 
 export fn __handle_interrupt(frame: *TrapFrame) callconv(.{ .x86_64_sysv = .{} }) void {
-    kpcb.local.debug_interrupt_count += 1;
+    kpcb.local.debug_interrupt_count +%= 1;
 
     var handled: bool = false;
     const isException = frame.vector.raw < 32;
@@ -133,7 +134,6 @@ export fn __handle_interrupt(frame: *TrapFrame) callconv(.{ .x86_64_sysv = .{} }
             frame.vector.exception,
             frame,
         ) catch unreachable;
-
     } else {
         if (kpcb.local.interrupt_depth >= MAX_INTERRUPT_DEPTH) arch.halt_cpu();
         kpcb.local.interrupt_depth += 1;
@@ -156,14 +156,11 @@ export fn __handle_interrupt(frame: *TrapFrame) callconv(.{ .x86_64_sysv = .{} }
     const original_frame: TrapFrame = frame.*;
 
     if (irql.current().raw() <= irql.Irql.dispatch.raw() and kpcb.local.interrupt_depth == 1) {
-        logger.println("running scheduler... frame = {any}", .{frame}) catch unreachable;
         kpcb.current().scheduler.schedule(frame);
     }
 
     kpcb.local.last_interrupt_handeled = handled;
     if (isException) kpcb.local.exception_depth -= 1 else kpcb.local.interrupt_depth -= 1;
-
-    logger.println("info: trying to continue normally...", .{}) catch unreachable;
 
     kpcb.current().last_interrupt_frame = original_frame;
 }
@@ -184,6 +181,10 @@ pub const CpuMask = packed struct {
         return self.bitset.isSet(cpu);
     }
 
+    pub fn cpuCount(self: *CpuMask) usize {
+        return self.bitset.count();
+    }
+
     pub inline fn includesCurrent(self: *CpuMask) bool {
         return self.includes(@intCast(arch.current_cpu()));
     }
@@ -199,14 +200,50 @@ pub const Interrupt = struct {
     cpumask: CpuMask,
     vector_hint: ?u8 = null,
 
+    delivery_mode: apic.DeliveryMode = .fixed,
+    polarity: apic.Polarity = .active_high,
+    trigger_mode: apic.TriggerMode = .edge,
+
     lock: irql.Lock,
     level: irql.Irql,
     isr: ?*const Isr,
     private: ?*anyopaque,
     binding: union(enum(u8)) {
         none: void = 0,
+        lapic: apic.LocalApic.LvtIndex = 1,
         _,
     } = .none,
+
+    pub fn attach(self: *Interrupt, isr: *const Isr, private: ?*anyopaque) void {
+        self.isr = isr;
+        self.private = private;
+    }
+
+    pub fn bindAndConnectLocal(self: *Interrupt, entry_idx: apic.LocalApic.LvtIndex) !void {
+        irql.current().assertHigherOrEqual(.sync);
+
+        if (self.cpumask.cpuCount() != 1 or !self.cpumask.includesCurrent()) return error.InvalidObject;
+
+        self.binding = .{ .lapic = entry_idx };
+
+        try kpcb.current().irq_router.register(self);
+
+        var lvtEntry = apic.LocalApic.readRawRegister(apic.LocalApic.LvtEntry, @intFromEnum(entry_idx));
+
+        lvtEntry.masked = false;
+        lvtEntry.vector = self.vector_hint orelse @panic("vector hint not present");
+        lvtEntry.trigger_mode = self.trigger_mode;
+        lvtEntry.delivery_mode = self.delivery_mode;
+
+        apic.LocalApic.writeRawRegister(apic.LocalApic.LvtEntry, @intFromEnum(entry_idx), lvtEntry);
+    }
+
+    pub fn sendEoi(self: *Interrupt) void {
+        switch (self.binding) {
+            .lapic => apic.eoi(),
+            else => {},
+        }
+    }
 };
 
 pub const IrqRoute = struct {
@@ -277,27 +314,25 @@ pub const IrqRouter = struct {
 
         const result = irq.isr.?(frame, irq.private);
 
+        irq.sendEoi();
+
         irq.lock.unlock();
 
         return result;
     }
 };
 
-pub fn connect(isr: *const Isr, private: ?*anyopaque, level: irql.Irql, cpumask: CpuMask) !*Interrupt {
-    if (cpumask.bitset.count() > 1) @panic("multicore interrupt not implemented yet");
-
+pub fn create(level: irql.Irql) !*Interrupt {
     const irq = try heap.allocator.create(Interrupt);
 
     irq.* = .{
         .binding = .none,
-        .cpumask = cpumask,
-        .isr = isr,
+        .cpumask = .currentCpu(),
+        .isr = null,
+        .private = null,
         .level = level,
-        .private = private,
         .lock = .init,
     };
-
-    try kpcb.current().irq_router.register(irq);
 
     return irq;
 }
