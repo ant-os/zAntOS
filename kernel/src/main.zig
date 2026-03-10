@@ -22,7 +22,8 @@ const antboot = @import("bootloader");
 const bootloader = @import("bootloader.zig");
 
 const zuacpi_bind = @import("acpi/zuacpi.zig");
-const uacpi = @import("zuacpi").uacpi;
+const zuacpi = @import("zuacpi");
+const uacpi = zuacpi.uacpi;
 const pci = @import("pci.zig");
 
 const irql = @import("interrupts/irql.zig");
@@ -38,7 +39,7 @@ const Process = @import("scheduling/process.zig");
 const Mutex = @import("sync/Mutex.zig");
 
 const apic = @import("apic.zig");
-const tsc = @import("tsc.zig"); 
+const tsc = @import("tsc.zig");
 const cpuid = @import("cpuid.zig");
 
 //const heap = @import("heap.zig");
@@ -98,6 +99,27 @@ export fn antkInitalizeSystem(_: ?*anyopaque) callconv(arch.cc_unaligned) noretu
     arch.halt_cpu();
 }
 
+pub fn gasWrite(comptime T: type, addr: zuacpi.Gas, value: T) !void {
+    if (@bitSizeOf(T) != addr.register_bit_width) return error.MismatchedBitWidth;
+    switch (addr.address_space) {
+        .system_memory => {
+            const memaddr = mm.PhysicalAddress{ .uint = addr.address.system_memory };
+            const mapping: *volatile T = @ptrCast(try mm.map(
+                memaddr,
+                @sizeOf(T),
+                .{ .writable = true, .write_through = true },
+            ));
+            mapping.* = value;
+            try mm.unmap(.of(@volatileCast(mapping)), @sizeOf(T));
+        },
+        .system_io => {
+            const port: u16 = @intCast(addr.address.system_io);
+            io.writeAny(T, port, value);
+        },
+        else => std.debug.panic("unsupported address space for write: {s}", .{@tagName(addr.address_space)}),
+    }
+}
+
 pub noinline fn init() !void {
     const log = klog;
 
@@ -116,14 +138,20 @@ pub noinline fn init() !void {
     try pci.init();
 
     try testing_();
-    
+
     //const mymutex = try Mutex.new();
 
-    
-    log.info("{any}", .{cpuid.cpuid(cpuid.hypervisor_id)});
+    log.info("cpuid(.freq_1) = {any}", .{cpuid.cpuid(cpuid.freq_1)});
+    log.info("bootloader found that it is: {d}ns per cycle for the tsc", .{bootloader.info.us_per_cycle});
 
-    const res = cpuid.cpuid(cpuid.freq_2);
-    log.info("{any}", .{res});
+    const fadt = try uacpi.tables.table_fadt();
+    log.info("reset reg: {any}, reset value: {any}", .{ fadt.reset_reg, fadt.reset_value });
+    // try gasWrite(u8, fadt.reset_reg, fadt.reset_value);
+
+    tsc.init() catch unreachable;
+
+    // stall for 8 seconds.
+    tsc.stall(8 * 1000 * 1000);
 
     log.info("dumping info about the first process and it's threads.", .{});
     try Process.initialSystemProcess.dump(logger.writer(), true);

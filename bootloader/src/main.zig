@@ -415,44 +415,38 @@ const @"16GiB" = 16 * Gib;
 
 pub inline fn tscRead() u64 {
     return asm volatile (
-        \\rdtsc
-        \\shlq $32, %%rdx
-        \\orq %%rdx, %%rax
-        : [ret] "={rax}" (-> u64),
+        \\ rdtsc
+        \\ shlq $32, %rax
+        \\ shrdq $32, %rdx, %rax
+        : [tsc] "={rax}" (-> u64),
         :
-        : .{ .rdx = true, .rax = true });
+        : .{
+          .rdx = true,
+        });
 }
 
-pub inline fn magicTscCalibrate() u64 {
-    return asm volatile (
-        \\rdtsc
-        \\lfence
-        \\shlq $32, %%rdx
-        \\orq %%rdx, %%rax
-        : [ret] "={rax}" (-> u64),
-        :
-        : .{ .memory = true, .rdx = true, .rax = true });
-}
-
-/// attempts to calibrate the tsc and return the nanoseconds per cycle.
+/// attempts to calibrate the tsc and return the microseconds per cycle.
 pub fn calibrateTsc() u64 {
     @setRuntimeSafety(false);
 
-
     var cycles_per_ns: u64 = 0;
+    const stall = efiBootServices()._stall;
+
+    asm volatile ("lfence");
+
     const before = @call(.always_inline, tscRead, .{});
-    _ = efiBootServices()._stall(1);
+    _ = stall(5);
     cycles_per_ns = @call(.always_inline, tscRead, .{});
+
     cycles_per_ns -= before;
-    cycles_per_ns /= 5;
-    return cycles_per_ns;
+    log.info("{d} cycles per microsecond", .{cycles_per_ns / 50});
+    return @divFloor(cycles_per_ns, 50);
 }
 
 pub fn main() uefi.Error!void {
     asm volatile ("cli");
     var arena: std.heap.ArenaAllocator = .init(uefi.pool_allocator);
     const alloc = arena.allocator();
-
 
     const ns_per_cycle = calibrateTsc();
     log.info("ns per cpu cycle: {d}", .{ns_per_cycle});
@@ -685,7 +679,7 @@ pub fn main() uefi.Error!void {
         },
         .acpi_ptr = acpi_ptr,
         .efi_ptr = uefi.system_table,
-        .ns_per_cycle = ns_per_cycle,
+        .us_per_cycle = ns_per_cycle,
     };
 
     try efiBootServices().exitBootServices(uefi.handle, mmap.info.key);
@@ -750,5 +744,5 @@ pub const BootInfo = extern struct {
 
     acpi_ptr: ?*anyopaque,
     efi_ptr: *uefi.tables.SystemTable,
-    ns_per_cycle: u64,
+    us_per_cycle: u64,
 };
