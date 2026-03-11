@@ -30,6 +30,8 @@ last_interrupt_frame: interrupts.TrapFrame,
 last_interrupt_handeled: bool,
 irq_router: interrupts.IrqRouter = .init,
 
+lapic_ticks_per_microsecond: u32 = 1,
+
 scheduler: Scheduler,
 
 // END PER CPU STATE //

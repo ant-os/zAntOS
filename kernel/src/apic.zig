@@ -7,6 +7,7 @@ const irql = @import("interrupts/irql.zig");
 
 const Msr = @import("arch.zig").Msr;
 pub const LocalApic = @import("apic/lapic.zig");
+pub const timer = @import("apic/timer.zig");
 const MultiBoundedArrray = @import("utils/multi_bounded_array.zig").MultiBoundedArray;
 const log = std.log.scoped(.apic);
 

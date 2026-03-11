@@ -109,7 +109,7 @@ fn internalSwitchToThread(self: *Scheduler, thread: *Thread, frame: *TrapFrame) 
         return;
     }
 
-    log.debug("switching to thread with id {d} ('{s}'), preempted={any}", .{ thread.id.uint, thread.name orelse "<???>", frame.vector.raw != 0x20});
+    log.debug("switching to thread with id {d} ('{s}'), preempted={any}", .{ thread.id.uint, thread.name orelse "<???>", frame.vector.raw != 0x20 });
     if (self.current_thread) |current| {
         const oldState = current.swapState(.ready);
 
@@ -133,8 +133,10 @@ pub fn setRunning(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
     if (thread.saved_context == null) @panic("thread has no saved context");
     std.debug.assert(thread.swapState(.running) == .ready);
 
+    const quatum = 8000;
+
     thread.saved_context.?.applyToFrame(frame);
-    thread.quatum = 1000;
+    thread.quatum = quatum;
     self.current_thread = thread;
 }
 

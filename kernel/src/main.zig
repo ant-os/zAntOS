@@ -139,34 +139,14 @@ pub noinline fn init() !void {
     try pci.init();
     pic.remapAndDisable();
     try apic.init();
+    try apic.timer.init();
 
-    const localTimerIrq = try interrupts.create(.clock);
-
-    var initLock = irql.Lock.init;
-
-    {
-        initLock.lockAt(.sync);
-        defer initLock.unlock();
-
-        apic.LocalApic.writeRawRegister(u32, 0x3E0, 0x2);
-        apic.LocalApic.writeRawRegister(u32, 0x380, std.math.maxInt(u32));
-
-        apic.LocalApic.writeRawRegister(apic.LocalApic.LvtEntry, @intFromEnum(apic.LocalApic.LvtIndex.timer), apic.LocalApic.LvtEntry{
-            .masked = true,
-            .vector = 0x00,
-            .mode = .{ .timer = .periodic },
-            .trigger_mode = .edge,
-        });
-
-        localTimerIrq.attach(&handleLapicTimer, null);
-        try localTimerIrq.bindAndConnectLocal(.timer);
-
-        asm volatile ("sti");
-    }
-
-    try testing_();
+    asm volatile ("sti");
 
     //const mymutex = try Mutex.new();
+
+    log.info("stalling for 1s...", .{});
+    tsc.stall(1_000_000);
 
     log.info("cpuid(.freq_1) = {any}", .{cpuid.cpuid(cpuid.freq_1)});
     log.info("bootloader found that it is: {d}ns per cycle for the tsc", .{bootloader.info.us_per_cycle});
@@ -174,6 +154,8 @@ pub noinline fn init() !void {
     const fadt = try uacpi.tables.table_fadt();
     log.info("reset reg: {any}, reset value: {any}", .{ fadt.reset_reg, fadt.reset_value });
     // try gasWrite(u8, fadt.reset_reg, fadt.reset_value);
+
+    log.info("cpuid query(leaf=1): {any}", .{cpuid.cpuid(.cpu_info_and_features)});
 
     log.info("dumping info about the first process and it's threads.", .{});
     try Process.initialSystemProcess.dump(logger.writer(), true);
@@ -185,16 +167,15 @@ pub noinline fn init() !void {
     //     }
     // }.call, null) catch unreachable;
 
+
+    try testing_();
+
     if (@import("builtin").is_test) ktest.main() catch unreachable;
     log.info("END", .{});
 }
 
 fn handleDispatch(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
     kpcb.current().scheduler.yield_ = true;
-    return true;
-}
-
-fn handleLapicTimer(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
     return true;
 }
 
@@ -335,23 +316,18 @@ pub fn testing_() !void {
 
     klog.debug("{any} (expecting void)", .{irp.executeSingle()});
 
-
-
     {
         const oldIrql = irql.raise(.deferred);
         defer irql.update(oldIrql);
 
         const threadA = try Process.initialSystemProcess.spawnThread(threadFunc, null);
         threadA.name = "Test";
- 
 
         global_mutex = try Mutex.new();
-        try global_mutex.?.lock();  
+        try global_mutex.?.lock();
 
-            klog.info("testing mutex and scheduler... note: lock is owned by init but unlocking at idx=10", .{});
-
+        klog.info("testing mutex and scheduler... note: lock is owned by init but unlocking at idx=10", .{});
     }
-
 
     for (0..21) |i| {
         tsc.stall(1000);

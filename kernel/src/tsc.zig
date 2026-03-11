@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const bootloader = @import("bootloader.zig");
+const irql = @import("interrupts/irql.zig");
 
 pub var microseconds_per_cycle: u64 = 100;
 
@@ -29,10 +30,13 @@ pub fn delay(cycles: u64) void {
     while (readRaw() < end) {}
 }
 
+/// Delays exection for atleast the given amount of microseconds.
 pub fn stall(microseconds: u64) void {
     const start = read();
     const end = start + microseconds;
-    while (read() < end) {}
+    while (read() < end) {
+        std.atomic.spinLoopHint();
+    }
 }
 
 pub fn init() !void {

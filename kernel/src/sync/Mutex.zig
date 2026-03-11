@@ -58,6 +58,7 @@ pub fn poll(self: *Mutex, thread: *Thread) anyerror!bool {
 pub fn unlock(self: *Mutex) void {
     self.owner.store(0, .release);
     _ = self.awaitable.wakeSingleNoLock();
+   Scheduler.yield();
 }
 
 pub fn new() !*Mutex {

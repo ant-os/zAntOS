@@ -25,8 +25,15 @@ pub const Irql = enum(u4) {
         return @intFromEnum(self);
     }
 
+    pub fn lessThan(self: Irql, irql: Irql) bool {
+        return self.raw() < irql.raw();
+    }
+
     pub fn assertLessOrEqual(self: Irql, irql: Irql) void {
-        if (self.raw() > irql.raw()) @panic("irql not less or equal");
+        if (self.raw() > irql.raw()) std.debug.panic(
+            "irql not less or equal: {s} > {s}",
+            .{ @tagName(self), @tagName(irql) },
+        );
     }
 
     pub fn assertHigherOrEqual(self: Irql, irql: Irql) void {
