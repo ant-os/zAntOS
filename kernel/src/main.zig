@@ -32,9 +32,9 @@ const pci = @import("pci.zig");
 const irql = @import("interrupts/irql.zig");
 const interrupts = @import("interrupts.zig");
 
-const Driver = @import("antkd/Driver.zig");
-const Device = @import("antkd/Device.zig");
-const Irp = @import("antkd/Irp.zig");
+const Driver = @import("io/Driver.zig");
+const Device = @import("io/Device.zig");
+const Irp = @import("io/Irp.zig");
 
 const Scheduler = @import("scheduler.zig");
 const Process = @import("scheduling/process.zig");

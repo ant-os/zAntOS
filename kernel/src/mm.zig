@@ -76,6 +76,11 @@ pub const PhysicalAddr = packed union {
     ptr: [*]const u8,
 };
 
+pub const LocalPool = struct {
+    
+    fixed_alloc: std.heap.FixedBufferAllocator,
+};
+
 pub fn map(paddr: paging.PhysicalAddress, size: usize, attrs: paging.PageAttributes) ![*]u8 {
     if ((size + paddr.split.pageoffset) >= 0x1000) return error.Unimplemented;
     const vpage = &(try syspte.reserve(1))[0];

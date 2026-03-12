@@ -4,10 +4,14 @@ const std = @import("std");
 const ob = @import("../ob/object.zig");
 const heap = @import("../mm/heap.zig");
 const function = @import("function.zig");
+const irql = @import("../interrupts/irql.zig");
+const queue = @import("../utils/queue.zig");
+
 
 const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
 const Driver = @import("Driver.zig");
 const Device = @import("Device.zig");
+const Mutex = @import("../sync/Mutex.zig");
 const Irp = @This();
 
 pub const MAX_MAJOR_FUNCTIONS = function.MAX_MAJOR_FUNCTIONS;
@@ -18,6 +22,15 @@ pub const Status = enum(u8) {
     pending,
     completed,
     failed,
+    _,
+};
+
+pub const Priority = enum(u8) {
+    lowest,
+    low,
+    medium,
+    high,
+    immediate = 0xFF,
     _,
 };
 
@@ -60,6 +73,22 @@ pending: u16 = 0,
 error_index: u16 = 0xFFFF,
 
 lock: SpinLock = .{},
+priority: Priority = .medium,
+queue_node: queue.SinglyLinkedNode = .{},
+
+var global_queue: queue.PriorityQueue(Irp, "queue_node", "priority", Priority) = .{};
+var global_lock: Mutex = .{};
+
+
+pub fn send(self: *Irp) !void {
+    if (self.stack_size == 0) return;
+
+    try global_lock.lock();
+    defer global_lock.unlock();
+    
+    global_queue.add(self);
+}
+
 
 pub fn create() !*Irp {
     const self = try heap.allocator.create(Irp);
