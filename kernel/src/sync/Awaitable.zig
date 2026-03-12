@@ -33,11 +33,11 @@ pub fn Embedded(comptime T: type, comptime field_name: []const u8) type {
 }
 
 lock: SpinLock = .init,
-waiter_queue: std.DoublyLinkedList = .{},
+waiter_queue: Scheduler.RunQueue = .{},
 pollFn: *const fn (*Awaitable, *Thread) anyerror!bool,
 
 pub fn parkThreadNoLock(self: *Awaitable, thread: *Thread) void {
-    self.waiter_queue.append(&thread.queue_node);
+    self.waiter_queue.add(thread);
     thread.setState(.waiting);
 }
 
@@ -56,9 +56,7 @@ pub fn wakeSingle(self: *Awaitable) bool {
 }
 
 pub fn wakeSingleNoLock(self: *Awaitable) bool {
-    if (self.waiter_queue.first == null) return false;
-    if (self.waiter_queue.popFirst()) |thnode| {
-        const thread: *Thread = @fieldParentPtr("queue_node", thnode);
+    if (self.waiter_queue.dequeue()) |thread| {
         Scheduler.localNoLocks().queueThread(thread);
         return true;
     }

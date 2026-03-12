@@ -89,7 +89,7 @@ pub inline fn eoi() void {
 pub fn send_ipi(ipi: LocalApic.CommandRegister) void {
     std.debug.assert(!LocalApic.readRegister(.icr).pending);
     std.debug.assert(ipi.pending == false);
-    const oldIrql = irql.raise(.deferred);
+    const oldIrql = if (irql.current().lessThan(.deferred)) irql.raise(.deferred) else irql.current();
     LocalApic.writeRegister(.icr, ipi);
     irql.update(oldIrql);
     while (LocalApic.readRegister(.icr).pending) {

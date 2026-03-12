@@ -7,10 +7,12 @@ const heap = @import("mm/heap.zig");
 const arch = @import("arch.zig");
 const tsc = @import("tsc.zig");
 const apic = @import("apic.zig");
+const logger = @import("logger.zig");
 const TrapFrame = @import("interrupts.zig").TrapFrame;
 const IrqSafeSpinlock = @import("interrupts/irql.zig").Lock;
 pub const Thread = @import("scheduling/thread.zig");
 pub const Process = @import("scheduling/process.zig");
+pub const RunQueue = @import("utils/queue.zig").PriorityQueue(Thread, "queue_node", "priority", Thread.Priority);
 
 const log = std.log.scoped(.scheduler);
 
@@ -21,7 +23,7 @@ yield_: bool = false,
 current_thread: ?*Thread = null,
 idle_thread: ?*Thread = null,
 local_lock: IrqSafeSpinlock = .init,
-ready_queue: std.DoublyLinkedList = .{},
+ready_queue: RunQueue,
 last_schedule_time: u64 = 0,
 enabled: bool = false,
 
@@ -105,7 +107,7 @@ pub fn schedule(self: *Scheduler, frame: *TrapFrame) void {
 
 fn internalSwitchToThread(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
     if (self.current_thread == thread) {
-        thread.quatum = 1000;
+        thread.quatum = thread.priority.quatum();
         return;
     }
 
@@ -115,7 +117,7 @@ fn internalSwitchToThread(self: *Scheduler, thread: *Thread, frame: *TrapFrame) 
 
         if (oldState.isSchedulable() and current != self.idle_thread) {
             current.saved_context = .fromFrame(frame);
-            if (oldState == .running) self.ready_queue.append(&current.node);
+            if (oldState == .running) self.ready_queue.add(current);
         }
     }
     self.setRunning(thread, frame);
@@ -133,7 +135,7 @@ pub fn setRunning(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
     if (thread.saved_context == null) @panic("thread has no saved context");
     std.debug.assert(thread.swapState(.running) == .ready);
 
-    const quatum = 8000;
+    const quatum = thread.priority.quatum();
 
     thread.saved_context.?.applyToFrame(frame);
     thread.quatum = quatum;
@@ -141,8 +143,7 @@ pub fn setRunning(self: *Scheduler, thread: *Thread, frame: *TrapFrame) void {
 }
 
 pub fn popNextThread(self: *Scheduler) ?*Thread {
-    const node = self.ready_queue.popFirst() orelse return null;
-    return @fieldParentPtr("node", node);
+    return self.ready_queue.dequeue();
 }
 
 pub fn setIdleThread(idle: *Thread) void {
@@ -150,10 +151,12 @@ pub fn setIdleThread(idle: *Thread) void {
 }
 
 pub fn queueThreadNoLock(self: *Scheduler, thread: *Thread) void {
+    if (thread == self.idle_thread) return;
+
     const oldState = thread.swapState(.ready);
     std.debug.assert(oldState == .created or oldState.isSchedulable());
 
-    self.ready_queue.prepend(&thread.node);
+    self.ready_queue.add(thread);
 }
 
 pub fn registerNewReadyThread(thread: *Thread) void {
@@ -189,8 +192,6 @@ pub fn yield() void {
 
 pub export fn __thread_idle(_: ?*anyopaque) callconv(arch.cc) noreturn {
     while (true) {
-        log.info("idle...", .{});
-        tsc.stall(5000);
-        Scheduler.yield();
+        asm volatile ("hlt");
     }
 }

@@ -17,14 +17,14 @@ owner: std.atomic.Value(u32) = .init(0),
 
 pub fn lock(self: *Mutex) !void {
     //self.awaitable.lock.lockAt(.sync);
-    const thread = Scheduler.currentThread().?;    
+    const thread = Scheduler.currentThread().?;
     if (try self.poll(thread)) return;
     thread.setState(.waiting);
     defer thread.setState(.running);
 
     self.awaitable.parkThreadNoYield(thread);
 
-   // self.awaitable.lock.unlock();
+    // self.awaitable.lock.unlock();
 
     while (self.owner.load(.acquire) != thread.id.uint) {
         Scheduler.yield();
@@ -56,9 +56,14 @@ pub fn poll(self: *Mutex, thread: *Thread) anyerror!bool {
 }
 
 pub fn unlock(self: *Mutex) void {
-    self.owner.store(0, .release);
+    std.debug.assert(self.owner.cmpxchgStrong(
+        Scheduler.safeCurrentThreadId().uint,
+        0,
+        .release,
+        .monotonic,
+    ) == null);
     _ = self.awaitable.wakeSingleNoLock();
-   Scheduler.yield();
+    Scheduler.yield();
 }
 
 pub fn new() !*Mutex {

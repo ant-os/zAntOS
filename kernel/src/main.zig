@@ -138,6 +138,7 @@ pub noinline fn init() !void {
         .{},
     )});
 
+    try heap.lateInit();
     try uacpi.initialize(.{});
     try pci.init();
     pic.remapAndDisable();
@@ -238,6 +239,7 @@ export fn antkStartupSystem(info: *antboot.BootInfo) callconv(arch.cc) noreturn 
         .{@errorName(e)},
     );
     idleThread.name = "Idle";
+    idleThread.priority = .lowest;
     idleThread.setState(.ready);
     Scheduler.setIdleThread(idleThread);
 

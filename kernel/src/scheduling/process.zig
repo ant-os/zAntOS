@@ -36,6 +36,7 @@ id: u16,
 state: State = .invalid,
 node: std.DoublyLinkedList.Node = .{},
 name: ?[]const u8 = null,
+priority: Thread.Priority = .normal,
 threads: struct {
     number: std.atomic.Value(u16),
     list: std.DoublyLinkedList,
@@ -64,6 +65,7 @@ pub fn createInitialSystemProcess() !*Process {
         .process = self,
         .saved_context = null,
         .state = .init(.invalid),
+        .priority = .lowest,
     };
 
     self.* = .{
@@ -141,6 +143,7 @@ pub fn createThread(
     );
     self.threads.list.append(&thread.node);
     thread.state.store(.created, .seq_cst);
+    thread.priority = self.priority;
 
     return thread;
 }

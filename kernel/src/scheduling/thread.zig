@@ -2,12 +2,14 @@ const std = @import("std");
 const arch = @import("../arch.zig");
 const ob = @import("../ob/object.zig");
 const heap = @import("../mm/heap.zig");
+const queue = @import("../utils/queue.zig");
 
 pub const Context = @import("context.zig");
 pub const StartFunc = fn (?*anyopaque) callconv(arch.cc) noreturn;
 
 const Thread = @This();
 const Process = @import("process.zig");
+const Scheduler = @import("../scheduler.zig");
 
 pub const State = enum(u8) {
     invalid = 0,
@@ -37,6 +39,28 @@ pub const Id = packed union {
     },
 };
 
+pub const Priority = enum(u8) {
+    lowest,
+    low,
+    normal,
+    medium,
+    high,
+    realtime = 0xFF,
+    _,
+
+    pub inline fn quatum(self: Priority) u64 {
+        return switch (self) {
+            .lowest => 1000,
+            .low => 2000,
+            .normal => 4000,
+            .medium => 6000,
+            .high => 10000,
+            .realtime => 20000,
+            else => @panic("invalid thread priority"),
+        };
+    }
+};
+
 header: ob.Header = .{
     .type = .thread,
     .vtable = .{
@@ -45,12 +69,13 @@ header: ob.Header = .{
 },
 id: Id,
 process: *Process,
+priority: Priority = .normal,
 name: ?[]const u8 = null,
 state: std.atomic.Value(State) = .init(.invalid),
 saved_context: ?Context = null,
 stack: ?[]u8 = null,
 node: std.DoublyLinkedList.Node = .{},
-queue_node: std.DoublyLinkedList.Node = .{},
+queue_node: queue.SinglyLinkedNode = .{},
 quatum: u64 = 0,
 
 pub fn swapState(self: *Thread, state: State) State {

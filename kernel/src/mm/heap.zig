@@ -1,6 +1,7 @@
 const std = @import("std");
 const mm = @import("../mm.zig");
 const vmm = @import("vmm.zig");
+const Mutex = @import("../sync/Mutex.zig");
 
 const log = std.log.scoped(.kheap);
 
@@ -18,6 +19,20 @@ pub var vma = vmm.Area{
     .end = HEAP_END,
     .attrs = .{ .writable = true },
 };
+
+var mutex: ?*Mutex = null;
+
+inline fn lock() void {
+    if (mutex == null) return else mutex.?.lock() catch @panic("heap lock poisoned");
+}
+
+inline fn unlock() void {
+    if (mutex == null) return else mutex.?.unlock();
+}
+
+pub fn lateInit() !void {
+    mutex = try Mutex.new();
+}
 
 /// Heap segment header, located right before eveng:ry allocation.
 const SegmentHeader = struct {
@@ -180,6 +195,9 @@ test "legacy tests" {
 }
 
 pub fn dumpSegments() void {
+    lock();
+    defer unlock();
+
     var currentSeg = firstSegment();
 
     log.debug("DUMPING KERNEL HEAP SEGMENTS (size: {d} pages):", .{totalPages});
@@ -198,6 +216,9 @@ pub fn dumpSegments() void {
 pub fn allocate(unaligned_size: usize, alignment: std.mem.Alignment, return_addr: usize) ![*]u8 {
     log.debug("allocate({d}, align: {any}) called.", .{ unaligned_size, alignment });
     _ = return_addr;
+
+    lock();
+    unlock();
 
     var size = alignment.forward(unaligned_size);
     if (size < HEAP_MINIMUM_SIZE) size = HEAP_MINIMUM_SIZE;
@@ -263,6 +284,9 @@ fn resize(
 
     log.debug("TRACE: resize([{d}]{any}, {d}) called", .{ memory.len, memory.ptr, size });
 
+    lock();
+    defer unlock();
+
     const seg = SegmentHeader.fromMemory(memory);
 
     if (seg.size == size) return true;
@@ -327,6 +351,9 @@ fn free(
     ret_addr: usize,
 ) void {
     log.debug("free() called", .{});
+
+    lock();
+    defer unlock();
 
     _ = alignment;
     _ = ret_addr;
