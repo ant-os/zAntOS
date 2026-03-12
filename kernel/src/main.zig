@@ -18,6 +18,9 @@ const heap = @import("mm/heap.zig");
 const syspte = @import("mm/syspte.zig");
 const mm = @import("mm.zig");
 
+const ob = @import("ob/object.zig");
+const vfs = @import("ob/vfs.zig");
+
 const antboot = @import("bootloader");
 const bootloader = @import("bootloader.zig");
 
@@ -166,7 +169,6 @@ pub noinline fn init() !void {
     //         return .@"continue";
     //     }
     // }.call, null) catch unreachable;
-
 
     try testing_();
 
@@ -336,6 +338,18 @@ pub fn testing_() !void {
     }
 
     asm volatile ("cli");
+
+    try vfs.init();
+
+    try vfs.attach("//Devices/GLOBALROOT/TestDevice", &mydev.header);
+
+    const vfsdev: *Device = @fieldParentPtr(
+        "header",
+        (try vfs.resolve("//Devices/GLOBALROOT/TestDevice")) orelse @panic("no object bound to vfs path"),
+    );
+
+    klog.info("result translated to device object: {any}", .{vfsdev});
+
     arch.halt_cpu();
 }
 
