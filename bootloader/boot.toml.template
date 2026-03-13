@@ -11,3 +11,8 @@ version = "$$KERNEL_VERSION$$"
 
 [kernel]
 image-path="$SYSTEMROOT$/$$KERNEL_RPATH$$"
+
+[[driver]]
+name="Test Driver"
+image-path="$SYSTEMROOT$/test.drv"
+preload=true

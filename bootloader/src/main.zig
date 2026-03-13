@@ -456,6 +456,8 @@ pub fn main() uefi.Error!void {
         return errorCast(uefi.Error, e) orelse error.NoMedia;
     };
 
+    log.debug("config: {any}", .{install.config()});
+
     const volumeLabel = blk: {
         const label, const buf = try efiGetFileInfo(install.systemroot, .volume_label, alloc);
         defer alloc.free(buf);
@@ -577,6 +579,33 @@ pub fn main() uefi.Error!void {
         }
     }
 
+    var drivers = std.ArrayList(BootInfo.Image).initCapacity(
+        uefi.pool_allocator,
+        install.config().driver.len,
+    ) catch return error.OutOfResources;
+    for (install.config().driver) |drv| {
+        const image = loadModuleData(&install, drv.@"image-path", alloc) catch |e| {
+            log.err("failed to load driver: {s}", .{@errorName(e)});
+            return error.LoadError;
+        };
+
+        const dname = uefi.pool_allocator.dupeZ(
+            u8,
+            std.fs.path.basenamePosix(drv.@"image-path"),
+        ) catch return error.OutOfResources;
+
+        log.info(
+            "loaded image for driver {s} at 0x{x} with size of {d} bytes!",
+            .{ dname, @intFromPtr(image.ptr), image.len },
+        );
+
+        drivers.appendAssumeCapacity(.{
+            .name = dname,
+            .base = @intFromPtr(image.ptr),
+            .size = image.len,
+        });
+    }
+
     // const mem = uefi.pool_allocator.alignedAlloc(
     //     u8,
     //     .@"8",
@@ -651,6 +680,13 @@ pub fn main() uefi.Error!void {
     // free all temporary allocations
     arena.deinit();
 
+    const kernelName = uefi.pool_allocator.dupeZ(
+        u8,
+        std.fs.path.basenamePosix(
+            install.config().kernel.@"image-path",
+        ),
+    ) catch return error.OutOfResources;
+
     const bootinfo: *BootInfo = @ptrCast(@alignCast(
         (allocatePages(1, .loader_data) catch return error.OutOfResources).ptr,
     ));
@@ -667,7 +703,7 @@ pub fn main() uefi.Error!void {
     bootinfo.* = .{
         .size = @sizeOf(BootInfo),
         .kernel_image = .{
-            .path = "<kernel>",
+            .name   = kernelName,
             .base = @intFromPtr(kernelImage.ptr),
             .size = kernelImage.len,
         },
@@ -680,6 +716,8 @@ pub fn main() uefi.Error!void {
         .acpi_ptr = acpi_ptr,
         .efi_ptr = uefi.system_table,
         .us_per_cycle = ns_per_cycle,
+        .preloaded_drivers = drivers.items.len,
+        .driver_images = drivers.items.ptr,
     };
 
     try efiBootServices().exitBootServices(uefi.handle, mmap.info.key);
@@ -730,7 +768,7 @@ pub const BootInfo = extern struct {
     };
 
     const Image = extern struct {
-        path: [*:0]const u8,
+        name: [*:0]const u8,
         base: usize,
         size: usize,
     };
@@ -745,4 +783,6 @@ pub const BootInfo = extern struct {
     acpi_ptr: ?*anyopaque,
     efi_ptr: *uefi.tables.SystemTable,
     us_per_cycle: u64,
+    preloaded_drivers: usize,
+    driver_images: [*]Image,
 };
