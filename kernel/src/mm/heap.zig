@@ -18,6 +18,7 @@ pub var vma = vmm.Area{
     .top = HEAP_BASE,
     .end = HEAP_END,
     .attrs = .{ .writable = true },
+    .tag = .{ .string = "vKHeap0 ".* }
 };
 
 var mutex: ?*Mutex = null;

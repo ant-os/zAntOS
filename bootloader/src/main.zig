@@ -601,7 +601,7 @@ pub fn main() uefi.Error!void {
 
         drivers.appendAssumeCapacity(.{
             .name = dname,
-            .base = @intFromPtr(image.ptr),
+            .base = image.ptr,
             .size = image.len,
         });
     }
@@ -704,7 +704,7 @@ pub fn main() uefi.Error!void {
         .size = @sizeOf(BootInfo),
         .kernel_image = .{
             .name   = kernelName,
-            .base = @intFromPtr(kernelImage.ptr),
+            .base = kernelImage.ptr,
             .size = kernelImage.len,
         },
         .memory = .{
@@ -760,16 +760,16 @@ pub fn main() uefi.Error!void {
 }
 
 pub const BootInfo = extern struct {
-    const Memory = extern struct {
+    pub const Memory = extern struct {
         descriptors: [*]const u8,
         descriptor_version: u32,
         descriptor_size: usize,
         descriptor_count: usize,
     };
 
-    const Image = extern struct {
+    pub const Image = extern struct {
         name: [*:0]const u8,
-        base: usize,
+        base: [*]u8,
         size: usize,
     };
 

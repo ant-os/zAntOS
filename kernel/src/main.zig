@@ -352,23 +352,83 @@ pub fn testing_() !void {
 
     klog.info("result translated to device object: {any}", .{vfsdev});
 
+    const newarea = try vmm.Area.allocate(
+        1,
+        0xFFFF_F010_0000_0000,
+        0xFFFF_F800_0000_0000,
+        .{ .writable = true },
+        .{ .string = "cDRVEXEI".* },
+    );
+
+    klog.info(
+        "MmCreateArea(): area of 0x{x}..0x{x}, backing frames = {d}, tagged {s}",
+        .{ newarea.start, newarea.end, newarea.backing_frame_count, newarea.tag.string },
+    );
+
+    for (bootloader.info.driver_images[0..bootloader.info.preloaded_drivers]) |drv| {
+        try loadBootDriver(drv);
+    }
+
     arch.halt_cpu();
 }
 
-export fn mythreadfunc(ctx: ?*anyopaque) callconv(arch.cc) noreturn {
-    _ = ctx;
-    klog.info("now we are a real thread!", .{});
+pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
+    const log = std.log.scoped(.antkdrv);
+    const elf = std.elf;
 
-    klog.debug("current thread id is {any}", .{kpcb.local.scheduler.current_thread.?.id});
+    const imageData = image.base[0..image.size];
 
-    @breakpoint();
+    log.debug("loading boot driver named {s} ({d} bytes)", .{
+        image.name,
+        image.size,
+    });
 
-    Scheduler.yield();
+    const elfHdr = std.elf.Header.init(
+        @as(*const std.elf.Ehdr, @ptrCast(@alignCast(image.base))).*,
+        .little,
+    );
 
-    klog.info("now we are back after yield()...", .{});
+    log.debug("elf header: {any}", .{elfHdr});
 
-    while (true) {
-        std.atomic.spinLoopHint();
+    var shdrIter = elfHdr.iterateSectionHeadersBuffer(imageData);
+
+    while (try shdrIter.next()) |shdr| {
+        log.info("section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}", .{
+            symbols.section_name(
+                &elfHdr,
+                imageData,
+                shdr.sh_name,
+            ) orelse "<no name>",
+            shdr.sh_offset,
+            shdr.sh_size,
+            shdr.sh_flags,
+            shdr.sh_type,
+        });
+
+        if (shdr.sh_flags & elf.SHF_ALLOC != 0) {
+            if (shdr.sh_size == 0) {
+                log.debug("skipping zero size section", .{});
+            }
+
+            const pages = (mm.PAGE_ALIGN.forward(shdr.sh_size) / 0x1000) + 1;
+
+            const vma = try vmm.Area.allocate(
+                pages,
+                0xFFFF_F010_0000_0000,
+                0xFFFF_F800_0000_0000,
+                .{ .writable = true },
+                .{ .string = "cDRVEXEI".* },
+            );
+
+            log.debug("vma: {any}", .{vma});
+
+            const filesize = if (shdr.sh_type == elf.SHT_NOBITS) 0 else shdr.sh_size;
+            const data = imageData[shdr.sh_offset..(shdr.sh_offset + filesize)];
+
+            const memory = vma.asPointer()[0..shdr.sh_size];
+            @memset(memory, 0);
+            @memcpy(memory.ptr, data);
+        }
     }
 }
 

@@ -12,17 +12,16 @@ const MAX_INITRD_FILENAME_LEN = 120;
 
 // get the kernel image as a byte-slice.
 pub noinline fn kernel_image() ![]const u8 {
-    const base: [*]u8 = @ptrFromInt(bootloader.info.kernel_image.base);
-    return base[0..bootloader.info.kernel_image.size];
+    return bootloader.info.kernel_image.base[0..bootloader.info.kernel_image.size];
 }
 
-inline fn section_header(header: *const std.elf.Header, buffer: []const u8, index: u32) ?*const std.elf.Shdr {
+pub inline fn section_header(header: *const std.elf.Header, buffer: []const u8, index: u32) ?*const std.elf.Shdr {
     if (index > header.shnum) return null;
     const offset = header.shoff + @sizeOf(std.elf.Shdr) * index;
     return @ptrCast(@alignCast(&buffer[offset]));
 }
 
-inline fn section_name(header: *const std.elf.Header, buffer: []const u8, index: u32) ?[]const u8 {
+pub inline fn section_name(header: *const std.elf.Header, buffer: []const u8, index: u32) ?[]const u8 {
     if (index == 0) return null;
     const shstr = section_header(
         header,
@@ -33,7 +32,7 @@ inline fn section_name(header: *const std.elf.Header, buffer: []const u8, index:
     return strtab_get(buffer, shstr, index);
 }
 
-inline fn strtab_get(buffer: []const u8, tab: *const std.elf.Shdr, index: u32) ?[]const u8 {
+pub inline fn strtab_get(buffer: []const u8, tab: *const std.elf.Shdr, index: u32) ?[]const u8 {
     if (index == 0) return null;
 
     if (index >= tab.sh_size) return null;
@@ -43,7 +42,7 @@ inline fn strtab_get(buffer: []const u8, tab: *const std.elf.Shdr, index: u32) ?
     return name[0..std.mem.len(name)];
 }
 
-inline fn section_by_name(
+pub inline fn section_by_name(
     header: *const std.elf.Header,
     buffer: []const u8,
     name: []const u8,
