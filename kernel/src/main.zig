@@ -370,6 +370,12 @@ pub fn testing_() !void {
     }
 
     arch.halt_cpu();
+
+    AntkDebugPrint("sd");
+}
+
+pub export fn AntkDebugPrint(s: [*:0]const u8) callconv(.{ .x86_64_sysv = .{} }) void {
+    klog.debug("driver: {s}", .{s});
 }
 
 pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
@@ -390,25 +396,49 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
 
     log.debug("elf header: {any}", .{elfHdr});
 
+    const strtabHeader = symbols.section_by_name(&elfHdr, imageData, ".strtab") orelse return error.NoStrtab;
+    const symtabHeader = symbols.section_by_name(&elfHdr, imageData, ".symtab") orelse return error.NoSymtab;
+
+    if (symtabHeader.sh_type != elf.SHT_SYMTAB or symtabHeader.sh_entsize != @sizeOf(elf.Sym)) return error.UnsupportedSymbolData;
+
+    log.debug(".symtab header: {any}", .{symtabHeader});
+
+    const numSymbols = symtabHeader.sh_size / @sizeOf(elf.Sym);
+    const rawSymbols: [*]elf.Sym = @ptrCast(@alignCast(imageData[symtabHeader.sh_offset..]));
+    const driverSymbols = rawSymbols[0..numSymbols];
+
+    const rawSectionHeaders: [*]elf.Shdr = @ptrCast(@alignCast(imageData[elfHdr.shoff..]));
+    const sections = rawSectionHeaders[0..elfHdr.shnum];
+
+    const relocHeader = symbols.section_by_name(&elfHdr, imageData, ".rela.text");
+
+    if (relocHeader == null or relocHeader.?.sh_type != elf.SHT_RELA or relocHeader.?.sh_entsize != @sizeOf(elf.Rela)) return error.UnsupportedRelocationData;
+
+    log.debug(".text.rela header: {any}", .{relocHeader});
+
+    const numRelocations = relocHeader.?.sh_size / @sizeOf(elf.Rela);
+    const rawRelocations: [*]elf.Rela = @ptrCast(@alignCast(imageData[relocHeader.?.sh_offset..]));
+    const relocs = rawRelocations[0..numRelocations];
+
     var shdrIter = elfHdr.iterateSectionHeadersBuffer(imageData);
 
     while (try shdrIter.next()) |shdr| {
-        log.info("section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}", .{
-            symbols.section_name(
-                &elfHdr,
-                imageData,
-                shdr.sh_name,
-            ) orelse "<no name>",
-            shdr.sh_offset,
-            shdr.sh_size,
-            shdr.sh_flags,
-            shdr.sh_type,
-        });
-
-        if (shdr.sh_flags & elf.SHF_ALLOC != 0) {
+        if ((shdr.sh_flags & elf.SHF_ALLOC) != 0) {
             if (shdr.sh_size == 0) {
                 log.debug("skipping zero size section", .{});
             }
+
+            log.info("section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}", .{
+                symbols.section_name(
+                    &elfHdr,
+                    imageData,
+                    shdr.sh_name,
+                ) orelse "<no name>",
+                shdr.sh_offset,
+                shdr.sh_size,
+                shdr.sh_flags,
+                shdr.sh_type,
+            });
 
             const pages = (mm.PAGE_ALIGN.forward(shdr.sh_size) / 0x1000) + 1;
 
@@ -420,7 +450,11 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
                 .{ .string = "cDRVEXEI".* },
             );
 
-            log.debug("vma: {any}", .{vma});
+            const writableHeader: *elf.Shdr = @alignCast(std.mem.bytesAsValue(elf.Shdr, imageData[(elfHdr.shoff + (@sizeOf(elf.Shdr) * (shdrIter.index - 0)))..]));
+
+            writableHeader.sh_addr = vma.start;
+
+            log.debug("vma at 0x{x}", .{vma.start});
 
             const filesize = if (shdr.sh_type == elf.SHT_NOBITS) 0 else shdr.sh_size;
             const data = imageData[shdr.sh_offset..(shdr.sh_offset + filesize)];
@@ -430,6 +464,77 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
             @memcpy(memory.ptr, data);
         }
     }
+
+    for (relocs) |rela| {
+        const symbol = &driverSymbols[rela.r_sym()];
+        const rtype: elf.R_X86_64 = @enumFromInt(rela.r_type());
+        const targetSection = sections[relocHeader.?.sh_info];
+
+        const symbolName = (if (symbol.st_type() == elf.STT_SECTION) symbols.section_name(
+            &elfHdr,
+            imageData,
+            sections[symbol.st_shndx].sh_name,
+        ) else symbols.strtab_get(
+            imageData,
+            strtabHeader,
+            symbol.st_name,
+        )) orelse "<noname>";
+        log.debug(
+            "relocation of type {any} for symbol {s}+0x{x} with patchsite of 0x{x}",
+            .{
+                rtype,
+                symbolName,
+                rela.r_addend,
+                targetSection.sh_addr + rela.r_offset,
+            },
+        );
+
+        const resolvedSymbol = switch (symbol.st_shndx) {
+            elf.SHN_UNDEF => @intFromPtr(&AntkDebugPrint),
+            elf.SHN_ABS => symbol.st_value,
+            else => |idx| sections[idx].sh_addr + symbol.st_value,
+        };
+
+        if (rtype != .@"64") {
+            log.warn("unsupported relocation", .{});
+            continue;
+        }
+
+        log.debug("patching with 0x{x}", .{resolvedSymbol + @as(usize, @bitCast(rela.r_addend))});
+
+        const patchsite: *align(1) volatile usize = @ptrFromInt(targetSection.sh_addr + rela.r_offset);
+        patchsite.* = resolvedSymbol + @as(usize, @bitCast(rela.r_addend));
+    }
+
+    var entry: ?*const @TypeOf(AntkDriverEntry) = null;
+
+    for (driverSymbols) |sym| {
+        const name = symbols.strtab_get(
+            imageData,
+            strtabHeader,
+            sym.st_name,
+        ) orelse continue;
+
+        if (std.mem.eql(u8, name, "AntkDriverEntry")) {
+            log.debug("entry found:{any}", .{sym});
+            entry = @ptrFromInt(switch (sym.st_shndx) {
+                elf.SHN_UNDEF => @intFromPtr(&AntkDebugPrint),
+                elf.SHN_ABS => sym.st_value,
+                else => |idx| sections[idx].sh_addr + sym.st_value,
+            });
+            break;
+        }
+    }
+
+    if (entry == null) return error.NoEntryPoint;
+
+    log.info("entry at 0x{x}", .{ @intFromPtr(entry) });    
+    log.info("AntkDriverEntry() at 0x{x} returned {d}", .{ @intFromPtr(entry), entry.?(null, null)});
+
+}
+
+export fn AntkDriverEntry(_: ?*anyopaque, _: ?*anyopaque) callconv(.{ .x86_64_sysv = .{} }) u64 {
+    @panic("unimplemented");
 }
 
 fn testcb(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {

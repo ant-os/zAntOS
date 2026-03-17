@@ -97,11 +97,49 @@ pub fn TrapFrameWithError(ErrorCode: type) type {
             _ = self;
             return true;
         }
+
+         pub fn format(self: *const @This(), w: anytype) !void {
+            try w.print(
+                \\rax={x:16} rbx={x:16} rcx={x:16} rdx={x:16}
+                \\rsi={x:16} rdi={x:16} rbp={x:16} rsp={x:16}
+                \\r08={x:16} r09={x:16} r10={x:16} r11={x:16}
+                \\r12={x:16} r13={x:16} r14={x:16} r15={x:16}
+                \\rip={x:16} flg={x:16} irql={s:15} cpl={x:16}
+                \\cr0={x:16} cr2={x:16} cr3={x:16} cr4={x:16}
+                \\
+            , .{
+                self.registers.rax,
+                self.registers.rbx,
+                self.registers.rcx,
+                self.registers.rdx,
+                self.registers.rsi,
+                self.registers.rdi,
+                self.registers.rbp,
+                self.rsp,
+                self.registers.r8,
+                self.registers.r9,
+                self.registers.r10,
+                self.registers.r11,
+                self.registers.r12,
+                self.registers.r13,
+                self.registers.r14,
+                self.registers.r15,
+                self.rip,
+                @as(u64, @bitCast(self.eflags)),
+                @tagName(irql.current()),
+                @intFromEnum(self.cs.rpl),
+                @as(u64, @bitCast(self.cr0)),
+                @as(u64, @bitCast(self.cr2)),
+                @as(u64, @bitCast(self.cr3)),
+                @as(u64, @bitCast(self.cr4)),
+            });
+        }
     };
 }
 
 noinline fn handle_exception(exception: Exception, frame: *TrapFrame) !bool {
     try logger.println("CPU exception: {s}", .{@tagName(exception)});
+    try frame.format(logger.writer());
     try logger.writeline("Stacktrace: ");
     try stacktrace.captureAndWriteStackTraceForFrame(
         logger.writer(),

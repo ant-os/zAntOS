@@ -103,7 +103,7 @@ pub const Area = struct {
             next = AreaList.next(area);
         }) {
             const gapEnd = if (next != null) next.?.start else std.math.maxInt(u64);
-            const gapSize = gapEnd - area.end;
+            const gapSize = gapEnd -| @max(area.end, min_address);
             if (size <= gapSize) return area;
         }
         return error.OutOfMemory;

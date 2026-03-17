@@ -122,6 +122,7 @@ pub fn build(b: *Build) !void {
 
     copyOutputs.addCopyFileToSource(image, imagePath);
     copyOutputs.step.dependOn(&sysrootBuilder.updateFiles.step);
+    _ = try copyOutputs.step.addDirectoryWatchInput(systemroot);
 
     buildStep.dependOn(&copyOutputs.step);
 
@@ -137,11 +138,7 @@ pub fn build(b: *Build) !void {
         "stop qemu from rebooting",
     ) orelse false;
 
-    const ovmfPath = b.option(
-        []const u8,
-        "ovmf-path",
-        "path to ovmf uefi firmware"
-    ) orelse "/usr/share/ovmf/OVMF.fd";
+    const ovmfPath = b.option([]const u8, "ovmf-path", "path to ovmf uefi firmware") orelse "/usr/share/ovmf/OVMF.fd";
 
     const qemuNographic = b.option(
         bool,
@@ -153,10 +150,10 @@ pub fn build(b: *Build) !void {
     qemu.addArgs(&.{ "-bios", ovmfPath });
     qemu.addArgs(&.{ "-hda", imagePath });
     qemu.addArgs(&.{ "-d", qemuDebug });
-    qemu.addArgs(&.{"-machine", "q35"});
-    qemu.addArgs(&.{"-cpu", "qemu64"});
+    qemu.addArgs(&.{ "-machine", "q35" });
+    qemu.addArgs(&.{ "-cpu", "qemu64" });
     if (qemuNographic) qemu.addArg("-nographic");
-    if (qemuNoreboot) qemu.addArg( "-no-reboot");
+    if (qemuNoreboot) qemu.addArg("-no-reboot");
     qemu.addArgs(&.{ "-m", "1G" });
     qemu.step.dependOn(buildStep);
     qemu.step.dependOn(&sysrootBuilder.updateFiles.step);
