@@ -32,6 +32,25 @@ pub inline fn section_name(header: *const std.elf.Header, buffer: []const u8, in
     return strtab_get(buffer, shstr, index);
 }
 
+pub inline fn sectionNameZ(header: *const std.elf.Header, buffer: []const u8, index: u32) ?[*:0]const u8 {
+    if (index == 0) return null;
+    const shstr = section_header(
+        header,
+        buffer,
+        header.shstrndx,
+    ).?;
+
+    return strtabGetZ(buffer, shstr, index);
+}
+
+pub inline fn strtabGetZ(buffer: []const u8, tab: *const std.elf.Shdr, index: u32) ?[*:0]const u8 {
+    if (index == 0) return null;
+
+    if (index >= tab.sh_size) return null;
+
+    return @ptrCast(buffer[tab.sh_offset + index ..].ptr);
+}
+
 pub inline fn strtab_get(buffer: []const u8, tab: *const std.elf.Shdr, index: u32) ?[]const u8 {
     if (index == 0) return null;
 
@@ -63,7 +82,6 @@ var strtab: *const std.elf.Shdr = undefined;
 var symbols: []const std.elf.Sym = undefined;
 var image: []const u8 = undefined;
 var initalized: bool = false;
-
 
 pub const Resolved = struct { name: []const u8, offset: usize };
 pub inline fn resolve(addr: usize) ?Resolved {

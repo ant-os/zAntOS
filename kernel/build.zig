@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) !void {
     kmod.addImport("bootloader", bootloader);
     kmod.addImport("zuacpi", zuacpi_module);
 
-    
+    kmod.addIncludePath(b.path("../include/"));
 
     const kernel = b.addExecutable(.{
         .name = "kernel",

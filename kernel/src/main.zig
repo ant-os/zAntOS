@@ -46,7 +46,8 @@ const apic = @import("apic.zig");
 const tsc = @import("tsc.zig");
 const cpuid = @import("cpuid.zig");
 
-//const heap = @import("heap.zig");
+//const heap = @import("heap.zig")
+const antk = @import("antk/antk.zig");
 const antstatus = @import("status.zig");
 pub const ANTSTATUS = antstatus.ANTSTATUS;
 //const filesystem = @import("filesystem.zig");
@@ -292,33 +293,9 @@ pub fn threadFunc(_: ?*anyopaque) callconv(.c) noreturn {
 pub fn testing_() !void {
     try logger.newline();
 
-    const mydrv = try Driver.create("example", &.{"ANT0000"});
-    mydrv.setCallback(
-        .example,
-        @ptrCast(&struct {
-            pub fn call(self: *Irp, params: *std.meta.TagPayloadByName(Irp.MajorFunction, "example"), _: ?*anyopaque) anyerror!void {
-                klog.debug("callback invoked, irp = {any} and params = {any}", .{ self, params });
-            }
-        }.call),
-    );
-
-    klog.debug("my driver: {any}", .{mydrv});
-
     const mydev = try Device.create("test device", null);
-    mydev.driver = mydrv;
 
     klog.debug("my device: {any}", .{mydev});
-
-    const irp = try Irp.create();
-    try irp.addEntry(
-        mydev,
-        .{
-            .example = .{ .a = 1234 },
-        },
-        null,
-    );
-
-    klog.debug("{any} (expecting void)", .{irp.executeSingle()});
 
     {
         const oldIrql = irql.raise(.deferred);
@@ -371,11 +348,7 @@ pub fn testing_() !void {
 
     arch.halt_cpu();
 
-    AntkDebugPrint("sd");
-}
-
-pub export fn AntkDebugPrint(s: [*:0]const u8) callconv(.{ .x86_64_sysv = .{} }) void {
-    klog.debug("driver: {s}", .{s});
+    antk.AntkDebugPrint("sd");
 }
 
 pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
@@ -450,7 +423,7 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
                 .{ .string = "cDRVEXEI".* },
             );
 
-            const writableHeader: *elf.Shdr = @alignCast(std.mem.bytesAsValue(elf.Shdr, imageData[(elfHdr.shoff + (@sizeOf(elf.Shdr) * (shdrIter.index - 0)))..]));
+            const writableHeader: *elf.Shdr = @alignCast(std.mem.bytesAsValue(elf.Shdr, imageData[(elfHdr.shoff + (@sizeOf(elf.Shdr) * (shdrIter.index - 1)))..]));
 
             writableHeader.sh_addr = vma.start;
 
@@ -470,11 +443,11 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
         const rtype: elf.R_X86_64 = @enumFromInt(rela.r_type());
         const targetSection = sections[relocHeader.?.sh_info];
 
-        const symbolName = (if (symbol.st_type() == elf.STT_SECTION) symbols.section_name(
+        const symbolName = (if (symbol.st_type() == elf.STT_SECTION) symbols.sectionNameZ(
             &elfHdr,
             imageData,
             sections[symbol.st_shndx].sh_name,
-        ) else symbols.strtab_get(
+        ) else symbols.strtabGetZ(
             imageData,
             strtabHeader,
             symbol.st_name,
@@ -490,9 +463,17 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
         );
 
         const resolvedSymbol = switch (symbol.st_shndx) {
-            elf.SHN_UNDEF => @intFromPtr(&AntkDebugPrint),
+            elf.SHN_UNDEF => if (antk.AntkResolveKernelSymbol(
+                symbolName,
+            )) |func| @intFromPtr(func) else {
+                log.err("undefined symbol {s}", .{symbolName});
+                return error.UndefinedSymbol;
+            },
             elf.SHN_ABS => symbol.st_value,
-            else => |idx| sections[idx].sh_addr + symbol.st_value,
+            else => |idx| blk: {
+                const section = &sections[idx];
+                break :blk section.sh_addr + symbol.st_value;
+            },
         };
 
         if (rtype != .@"64") {
@@ -506,7 +487,7 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
         patchsite.* = resolvedSymbol + @as(usize, @bitCast(rela.r_addend));
     }
 
-    var entry: ?*const @TypeOf(AntkDriverEntry) = null;
+    var entry: ?*const @TypeOf(antk.antkDriverEntry) = null;
 
     for (driverSymbols) |sym| {
         const name = symbols.strtab_get(
@@ -518,7 +499,7 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
         if (std.mem.eql(u8, name, "AntkDriverEntry")) {
             log.debug("entry found:{any}", .{sym});
             entry = @ptrFromInt(switch (sym.st_shndx) {
-                elf.SHN_UNDEF => @intFromPtr(&AntkDebugPrint),
+                elf.SHN_UNDEF => return error.UndefinedEntrypoint,
                 elf.SHN_ABS => sym.st_value,
                 else => |idx| sections[idx].sh_addr + sym.st_value,
             });
@@ -526,15 +507,14 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
         }
     }
 
-    if (entry == null) return error.NoEntryPoint;
+    const driver = try Driver.create(
+        image.name[0..std.mem.len(image.name)],
+        &.{"ANT????"},
+        entry orelse return error.NoEntryPoint,
+    );
 
-    log.info("entry at 0x{x}", .{ @intFromPtr(entry) });    
-    log.info("AntkDriverEntry() at 0x{x} returned {d}", .{ @intFromPtr(entry), entry.?(null, null)});
-
-}
-
-export fn AntkDriverEntry(_: ?*anyopaque, _: ?*anyopaque) callconv(.{ .x86_64_sysv = .{} }) u64 {
-    @panic("unimplemented");
+    log.info("AntkDriverEntry() returned {d}", .{antk.antkDriverEntry(driver, null)});
+    log.debug("driver object: {any}", .{driver});
 }
 
 fn testcb(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
