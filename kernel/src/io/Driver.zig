@@ -6,6 +6,8 @@ const heap = @import("../mm/heap.zig");
 const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
 const Irp = @import("Irp.zig");
 const antk = @import("../antk/antk.zig");
+const arch = @import("../arch.zig");
+const ANTSTATUS = @import("root").ANTSTATUS;
 
 const Driver = @import("Driver.zig");
 
@@ -13,7 +15,7 @@ const Device = @This();
 
 pub const Location = enum(u64) { _ };
 
-pub const Callback = ?*const fn (irp: *Irp, *const Irp.MajorFunction.Payload, ?*anyopaque) anyerror!void;
+pub const Callback = ?*const fn (irp: *Irp, *const Irp.MajorFunction.Payload, ?*anyopaque) callconv(arch.cc) ANTSTATUS;
 
 var global_list: std.DoublyLinkedList = .{};
 var global_lock: SpinLock = .{};

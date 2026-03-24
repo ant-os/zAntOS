@@ -515,6 +515,16 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
 
     log.info("AntkDriverEntry() returned {d}", .{antk.antkDriverEntry(driver, null)});
     log.debug("driver object: {any}", .{driver});
+
+    const testdev = try Device.create("test", null);
+    testdev.driver = driver;
+
+    const irp = try Irp.create();
+    try irp.addEntry(testdev, .{
+        .read = .{},
+    }, null);
+
+    log.info("result of read irp: {any}", .{irp.executeSingle()});
 }
 
 fn testcb(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {
