@@ -37,3 +37,8 @@ ANTKAPI ANTSTATUS AntkDriverEntry(IN PKO_DRIVER DriverObect, IN void *unused);
 /// @return Nothing, errors get ignored.
 ANTKAPI void AntkDebugPrint(IN char *message);
 
+/// @brief Prints a formatted debug message
+/// @param message The message to print.
+/// @param ... Format Args
+/// @return Nothing, errors get ignored.
+ANTKAPI void AntkDebugPrintEx(IN char *message, ...);

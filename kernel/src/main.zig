@@ -521,10 +521,13 @@ pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
 
     const irp = try Irp.create();
     try irp.addEntry(testdev, .{
-        .read = .{},
+        .write = .{
+            .Buffer = @ptrCast(@constCast("This is the input buffer")),
+            .Offset = 0xAAAA,
+        },
     }, null);
 
-    log.info("result of read irp: {any}", .{irp.executeSingle()});
+    log.info("result of write irp: {any}", .{irp.executeSingle()});
 }
 
 fn testcb(_: *interrupts.TrapFrame, _: ?*anyopaque) callconv(.c) bool {

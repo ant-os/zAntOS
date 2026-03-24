@@ -3,6 +3,7 @@ const arch = @import("../arch.zig");
 const ANTSTATUS = @import("root").ANTSTATUS;
 const Driver = @import("../io/Driver.zig");
 const Irp = @import("../io/Irp.zig");
+const logger = @import("../logger.zig");
 
 const log = std.log.scoped(.antkapi);
 
@@ -27,7 +28,6 @@ pub export fn AntkResolveKernelSymbol(sym: [*:0]const u8) linksection(".antk_cal
         ));
     }
 
-
     return null;
 }
 
@@ -50,8 +50,41 @@ pub export fn antkDriverEntry(driver: *Driver, unused: ?*anyopaque) callconv(arc
 }
 
 pub export fn AntkDebugPrint(message: [*:0]const u8) callconv(cc) void {
-    log.debug("driver: {s}", .{message});
-    @breakpoint();
+    logger.println("[debug] DRIVER: {s}", .{message}) catch {};
+}
+
+pub export fn AntkDebugPrintEx(format: [*:0]const u8, ...) callconv(cc) void {
+    var valist = @cVaStart();
+    var index: usize = 0;
+
+    logger.print("[debug] DRIVER: ", .{}) catch {};
+
+    fmt: while (index < std.mem.len(format)) : (index += 1) {
+        const chr = format[index];
+
+        switch (chr) {
+            '%' => {
+                if (index + 1 >= std.mem.len(format)) break :fmt;
+                index += 1;
+                const spec = format[index];
+                (switch (spec) {
+                    'd' => logger.writer().printInt(@cVaArg(&valist, u32), 10, .lower, .{}),
+                    'x' => logger.writer().printInt(@cVaArg(&valist, c_int), 8, .lower, .{}),
+                    'q' => logger.writer().printInt(@cVaArg(&valist, u64), 10, .lower, .{}),
+                    'p' => logger.writer().print("0x{x}", .{@cVaArg(&valist, u64)}),
+                    's' => logger.writer().print("{s}", .{@cVaArg(&valist, [*:0]const u8)}),
+                    else => continue :fmt,
+                }) catch {};
+            },
+            '\n' => {
+                logger.newline() catch {};
+                logger.print("[debug] DRIVER: ", .{}) catch {};
+            },
+            else => logger.writer().writeByte(chr) catch {},
+        }
+    }
+
+    logger.newline() catch {};
 }
 
 pub export fn IrpCreate(stack_size: u8, c_outIrp: ?**Irp) ANTSTATUS {
@@ -66,9 +99,9 @@ pub export fn IrpCreate(stack_size: u8, c_outIrp: ?**Irp) ANTSTATUS {
     return .success;
 }
 
-pub export fn IoInstallHandler(c_DriverObject: ?*Driver, c_MajorFunc: u8, handler: Driver.Callback) ANTSTATUS{
+pub export fn IoInstallHandler(c_DriverObject: ?*Driver, c_MajorFunc: u8, handler: Driver.Callback) ANTSTATUS {
     const driver = c_DriverObject orelse return .invalid_parameter;
-    if (driver.header.@"type" != .driver) return .invalid_parameter;
+    if (driver.header.type != .driver) return .invalid_parameter;
 
     const func = std.enums.fromInt(Irp.MajorFunction.Tag, c_MajorFunc) orelse return .invalid_parameter;
 
