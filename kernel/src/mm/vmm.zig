@@ -43,7 +43,6 @@ pub const Tag = extern union {
         invalid = std.mem.bytesToValue(u64, "INVALID "),
         _,
     },
-
 };
 
 pub const Area = struct {
@@ -58,6 +57,32 @@ pub const Area = struct {
     node: queue.DoublyLinkedNode = .{},
     backing_frame_count: u32 = 0,
     backing_frames: std.DoublyLinkedList = .{},
+
+    pub fn reserve(
+        pages: usize,
+        min_address: usize,
+        max_address: usize,
+        attributes: paging.PageAttributes,
+        tag: Tag,
+    ) !*Area {
+        const before = try findAreaBeforeGap(pages, min_address, max_address);
+
+        const start = @max(min_address, before.end);
+        const end = start + (pages * mm.PAGE_SIZE);
+
+        const self = try heap.allocator.create(Area);
+        self.* = .{
+            .start = start,
+            .end = end,
+            .top = start,
+            .attrs = attributes,
+            .tag = tag,
+        };
+
+        try insertKernelArea(self);
+
+        return self;
+    }
 
     pub fn allocate(
         pages: usize,
@@ -87,11 +112,38 @@ pub const Area = struct {
         return self;
     }
 
+    pub fn delete(
+        self: *Area,
+    ) !void {
+        global_lock.lock();
+        defer global_lock.unlock();
+
+        kernel_areas.remove(self);
+    }
+
+    pub fn resolve(
+        address: usize,
+    ) !*Area {
+        global_lock.lock();
+        defer global_lock.unlock();
+
+        var current = kernel_areas.peek_front();
+
+        while (current) |area| : ({
+            current = AreaList.next(area);
+        }) if (area.start >= address and address < area.end) return area;
+
+        return error.OutOfRange;
+    }
+
     pub fn findAreaBeforeGap(
         pages: u64,
         min_address: usize,
         max_address: usize,
     ) !*Area {
+        global_lock.lock();
+        defer global_lock.unlock();
+
         const size = pages * mm.PAGE_SIZE;
         if ((min_address + size) > max_address) return error.InvalidParamter;
 
@@ -116,16 +168,12 @@ pub const Area = struct {
     pub fn insertKernelArea(area: *Area) !void {
         if (area.start < 0xFFFF_0000_0000_0000) return error.InvalidParameter;
 
+        const pages = (area.end - area.start) >> mm.PAGE_SHIFT;
+        const gap = (try findAreaBeforeGap(pages, area.start, area.end));
+
         global_lock.lock();
         defer global_lock.unlock();
 
-        if (kernel_areas.length() == 0) {
-            kernel_areas.add_front(area);
-            return;
-        }
-
-        const pages = (area.end - area.start) >> mm.PAGE_SHIFT;
-        const gap = (try findAreaBeforeGap(pages, area.start, area.end));
         kernel_areas.add_after(gap, area);
     }
 

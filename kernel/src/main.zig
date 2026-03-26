@@ -172,7 +172,7 @@ pub noinline fn init() !void {
     //     }
     // }.call, null) catch unreachable;
 
-    try testing_();
+    try experiments();
 
     if (@import("builtin").is_test) ktest.main() catch unreachable;
     log.info("END", .{});
@@ -290,7 +290,7 @@ pub fn threadFunc(_: ?*anyopaque) callconv(.c) noreturn {
     }
 }
 
-pub fn testing_() !void {
+pub fn experiments() !void {
     try logger.newline();
 
     const mydev = try Device.create("test device", null);
@@ -346,10 +346,47 @@ pub fn testing_() !void {
         try loadBootDriver(drv);
     }
 
-    arch.halt_cpu();
+    try logger.newline();
 
-    antk.AntkDebugPrint("sd");
+    try uacpi.namespace_load();
+
+    uacpi.namespace.get_root().for_each_child(
+        &struct {
+            pub fn call(_: ?*anyopaque, node: *uacpi.namespace.NamespaceNode, depth: u32) callconv(.c) uacpi.namespace.IterationDecision {
+                if ((node.node_type() catch return .@"continue") != .device) return .@"continue";
+
+                var hid: *IdString = undefined;
+                if (uacpi_eval_hid(node, &hid) != .ok) return .@"continue";
+                defer uacpi_free_id_string(hid);
+
+                klog.info("{s}, hid={s}, depth={d}", .{
+                    node.generate_absolute_path() orelse "???",
+                    hid.bytes[0..hid.size],
+                    depth,
+                });
+                return .@"continue";
+            }
+        }.call,
+        null,
+        1 << @intFromEnum(uacpi.ObjectType.device),
+        @bitCast(@as(i32, -1)),
+        null,
+    ) catch unreachable;
+
+    arch.halt_cpu();
 }
+
+extern fn uacpi_free_id_string(id: *IdString) callconv(.c) void;
+
+extern fn uacpi_eval_hid(
+    node: *uacpi.namespace.NamespaceNode,
+    out_id: **IdString,
+) callconv(.c) uacpi.uacpi_status;
+
+const IdString = extern struct {
+    size: u32,
+    bytes: [*]const u8,
+};
 
 pub fn loadBootDriver(image: antboot.BootInfo.Image) !void {
     const log = std.log.scoped(.antkdrv);

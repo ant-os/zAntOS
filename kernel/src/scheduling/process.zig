@@ -10,7 +10,7 @@ const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
 const Thread = @import("thread.zig");
 const Process = @This();
 
-pub const STACK_SIZE: usize = 16 * 1024;
+pub const STACK_SIZE: usize = 32 * 1024;
 
 var global_list: std.DoublyLinkedList = .{};
 var global_lock: SpinLock = .{};

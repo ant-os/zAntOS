@@ -5,6 +5,7 @@ const ktest = @import("ktest.zig");
 const pfmdb = @import("mm/pfmdb.zig");
 const paging = @import("mm/paging.zig");
 const syspte = @import("mm/syspte.zig");
+const vmm = @import("mm/vmm.zig");
 
 pub const Pte = @import("mm/pte.zig").Pte;
 pub const VirtualAddress = paging.VirtualAddress;
@@ -77,12 +78,30 @@ pub const PhysicalAddr = packed union {
 };
 
 pub const LocalPool = struct {
-    
     fixed_alloc: std.heap.FixedBufferAllocator,
 };
 
 pub fn map(paddr: paging.PhysicalAddress, size: usize, attrs: paging.PageAttributes) ![*]u8 {
-    if ((size + paddr.split.pageoffset) >= 0x1000) return error.Unimplemented;
+    if ((size + paddr.split.pageoffset) >= 0x1000) {
+        const pages = std.mem.alignForward(usize, size + paddr.split.pageoffset, PAGE_SIZE) / PAGE_SIZE;
+        const area = try vmm.Area.reserve(
+            pages,
+            0xFFFF_8000_0000_0000,
+            0xFFFF_9FFF_FFFF_0000,
+            attrs,
+            .{ .uint = std.mem.bytesToValue(u64, "vIOMAP  ") },
+        );
+
+        try paging.mapRegion(
+            std.mem.alignBackward(usize, paddr.uint, PAGE_SIZE),
+            area.start,
+            pages,
+            attrs,
+        );
+
+        return area.asPointer()[paddr.split.pageoffset..];
+    }
+
     const vpage = &(try syspte.reserve(1))[0];
     vpage.present = .{
         .writable = attrs.writable,
@@ -109,7 +128,10 @@ pub inline fn flushLocalTlb() void {
 }
 
 pub fn unmap(vaddr: paging.VirtualAddress, size: usize) !void {
-    if ((size + vaddr.split.pageoffset) >= 0x1000) return error.Unimplemented;
+    if ((size + vaddr.split.pageoffset) >= 0x1000) {
+        const area = try vmm.Area.resolve(vaddr.uint);
+        return area.delete();
+    }
 
     const pte: [*]Pte = @ptrCast(vaddr.getPte());
 

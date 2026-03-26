@@ -17,7 +17,9 @@ const cc = std.builtin.CallingConvention.c;
 const log = std.log.scoped(.uacpi);
 
 fn trace(comptime src: std.builtin.SourceLocation, args: anytype) void {
-    log.debug("TRACE {s} with args {any}", .{ src.fn_name, args });
+    _ = src;
+    _ = args;
+    // log.debug("TRACE {s} with args {any}", .{ src.fn_name, args });
 }
 
 pub export fn uacpi_kernel_map(addr: mm.PhysicalAddress, size: usize) callconv(cc) ?[*]u8 {
@@ -29,7 +31,10 @@ pub export fn uacpi_kernel_map(addr: mm.PhysicalAddress, size: usize) callconv(c
 
 export fn uacpi_kernel_unmap(addr: mm.VirtualAddress, size: usize) callconv(cc) void {
     trace(@src(), .{ addr.ptr, size });
-    mm.unmap(addr, size) catch @panic("uacpi_kernel_unmap(): invalid parameter");
+    mm.unmap(addr, size) catch |e| std.debug.panic(
+        "uacpi_kernel_unmap(): {s}",
+        .{@errorName(e)},
+    );
 }
 
 pub export fn uacpi_kernel_get_rsdp(addr: *u64) callconv(cc) uacpi.uacpi_status {
@@ -103,7 +108,7 @@ export fn uacpi_kernel_io_map(base: u64, len: usize, out_hwio: **HardwareIo) cal
 }
 
 export fn uacpi_kernel_io_unmap(hwio: *HardwareIo) callconv(cc) uacpi.uacpi_status {
-    trace(@src(), .{hwio.device});
+    trace(@src(), .{hwio.header});
     hwio.header.unref();
     return .ok;
 }
@@ -188,17 +193,16 @@ export fn uacpi_kernel_handle_firmware_request(_: [*c]uacpi.FirmwareRequestRaw) 
 
 export fn uacpi_kernel_install_interrupt_handler(gsi: u32, _: uacpi.InterruptHandler, _: ?*anyopaque, _: **anyopaque) callconv(cc) uacpi.uacpi_status {
     trace(@src(), .{ .gsi = gsi });
-    return .unimplemented;
+    return .ok;
 }
 
 export fn uacpi_kernel_uninstall_interrupt_handler(_: uacpi.InterruptHandler, _: *anyopaque) callconv(cc) uacpi.uacpi_status {
     trace(@src(), .{});
-    return .unimplemented;
+    return .ok;
 }
 
 export fn uacpi_kernel_create_spinlock() callconv(cc) ?*anyopaque {
     trace(@src(), .{});
-
 
     return @ptrCast(&__dummy);
 }

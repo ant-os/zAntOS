@@ -31,7 +31,7 @@ pub const Header = struct {
     }
 
     pub fn unref(self: *Header) void {
-        if (self.ptr_count == 1) return self.vtable.deinit(self);
+        if (self.ptr_count <= 1) return self.vtable.deinit(self);
         self.ptr_count -= 1;
     }
 };

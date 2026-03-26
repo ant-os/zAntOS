@@ -63,8 +63,10 @@ pub fn write(self: *HardwareIo, comptime T: type, offset: usize, value: T) !void
     }
 }
 
+var pool: std.heap.MemoryPool(HardwareIo) = .init(heap.allocator);
+
 pub fn fromInternal(dev: InternalDevice) !*HardwareIo {
-    const self = try heap.allocator.create(HardwareIo);
+    const self = try pool.create();
     self.* = .{
         .device = dev,
     };
@@ -75,5 +77,8 @@ pub fn ob_deinit(hdr: *ob.Header) void {
     std.debug.assert(hdr.type == .hardware_io);
 
     const self: *HardwareIo = @fieldParentPtr("header", hdr);
-    heap.allocator.destroy(self);
+
+    log.debug("deinit {any}", .{self});
+
+    pool.destroy(self);
 }

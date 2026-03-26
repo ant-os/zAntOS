@@ -20,9 +20,7 @@ pub const SpinLock = extern struct {
     }
 
     pub fn lock(self: *SpinLock) void {
-        var count: usize = 0;
-        while (!self.tryLock()) : (count += 1) {
-            if (count >= 100000) @trap();
+        while (!self.tryLock()) {
             std.atomic.spinLoopHint();
         }
     }
