@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const ob = @import("object.zig");
-const Mutex = @import("../sync/Mutex.zig");
+const Mutex = @import("../ke/sync/Mutex.zig");
 const heap = @import("../mm/heap.zig");
 
 const log = std.log.scoped(.vfs);
@@ -46,7 +46,7 @@ pub fn attach(path: []const u8, obj: *ob.Header) !void {
     try global_lock.?.lock();
     defer global_lock.?.unlock();
 
-    log.debug("attaching object at '{s}' with header: {any}", .{path, obj});
+    log.debug("attaching object at '{s}' with header: {any}", .{ path, obj });
 
     const node = try resolveNodeNoLock(path, true);
     node.object = obj;
@@ -55,7 +55,7 @@ pub fn attach(path: []const u8, obj: *ob.Header) !void {
 pub fn resolveNodeNoLock(path: []const u8, createMissing: bool) !*Node {
     if (!std.mem.startsWith(u8, path, "/")) return error.RelativePath;
 
-    log.debug("resolving node for path '{s}', createMissing={any}", .{path, createMissing});
+    log.debug("resolving node for path '{s}', createMissing={any}", .{ path, createMissing });
 
     var segIter = std.mem.splitScalar(u8, path[1..path.len], '/');
     var node = &root;
@@ -71,7 +71,7 @@ pub fn resolveNodeNoLock(path: []const u8, createMissing: bool) !*Node {
         node = node.payload.normal.get(segment) orelse blk: {
             if (!createMissing) {
                 log.debug("ERROR: segment not found and createMissing is false", .{});
-                return error.NotFound; 
+                return error.NotFound;
             }
             log.debug("creating missing segmented...", .{});
             const new = try heap.allocator.create(Node);

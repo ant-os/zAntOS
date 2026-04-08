@@ -1,7 +1,7 @@
 const std = @import("std");
-const mm = @import("../mm.zig");
+const mm = @import("mm.zig");
 const vmm = @import("vmm.zig");
-const Mutex = @import("../sync/Mutex.zig");
+const Mutex = @import("../ke/sync/Mutex.zig");
 
 const log = std.log.scoped(.kheap);
 
@@ -18,7 +18,7 @@ pub var vma = vmm.Area{
     .top = HEAP_BASE,
     .end = HEAP_END,
     .attrs = .{ .writable = true },
-    .tag = .{ .string = "vKHeap0 ".* }
+    .tag = .{ .string = "vKHeap0 ".* },
 };
 
 var mutex: ?*Mutex = null;

@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const paging = @import("paging.zig");
-const mm = @import("../mm.zig");
+const mm = @import("../mm/mm.zig");
 const Pte = @import("pte.zig").Pte;
 const Pfi = paging.Pfi;
 

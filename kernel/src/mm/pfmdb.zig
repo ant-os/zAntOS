@@ -2,11 +2,11 @@
 //!
 
 const std = @import("std");
-const ktest = @import("../ktest.zig");
-const bootldr = @import("../bootloader.zig");
+const ktest = @import("../tests/framework.zig");
+const bootldr = @import("../utils/antboot.zig");
 const bootmem = @import("bootmem.zig");
-const mm = @import("../mm.zig");
-const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
+const mm = @import("../mm/mm.zig");
+const SpinLock = @import("../hal/spinlock.zig").SpinLock;
 const log = std.log.scoped(.pfmdb);
 
 var pfmdb_array: ?[]PageFrame = null;

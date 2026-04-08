@@ -3,23 +3,21 @@
 
 const uacpi = @import("zuacpi").uacpi;
 const std = @import("std");
-const bootloader = @import("../bootloader.zig");
+const bootloader = @import("../../utils/antboot.zig");
 const binder = @import("zuacpi.zig");
-const mm = @import("../mm/mm.zig");
-const kpcb = @import("../kpcb.zig");
-const Thread = @import("../scheduling/thread.zig");
-const HardwareIo = @import("../hwio.zig");
-const heap = @import("../mm/heap.zig");
-const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
+const mm = @import("../../mm/mm.zig");
+const kpcb = @import("kmod").kpcb;
+const Thread = @import("kmod").Scheduler.Thread;
+const HardwareIo = @import("../../io/abstracthw.zig");
+const heap = @import("../../mm/heap.zig");
+const SpinLock = @import("../../hal/spinlock.zig").SpinLock;
 
 const cc = std.builtin.CallingConvention.c;
 
 const log = std.log.scoped(.uacpi);
 
 fn trace(comptime src: std.builtin.SourceLocation, args: anytype) void {
-    _ = src;
-    _ = args;
-    // log.debug("TRACE {s} with args {any}", .{ src.fn_name, args });
+    log.debug("TRACE {s} with args {any}", .{ src.fn_name, args });
 }
 
 pub export fn uacpi_kernel_map(addr: mm.PhysicalAddress, size: usize) callconv(cc) ?[*]u8 {
@@ -230,3 +228,4 @@ export fn uacpi_kernel_wait_for_work_completion() callconv(cc) uacpi.uacpi_statu
     trace(@src(), .{});
     return .unimplemented;
 }
+    

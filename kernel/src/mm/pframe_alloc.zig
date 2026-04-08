@@ -2,9 +2,9 @@
 //!
 
 const std = @import("std");
-const mm = @import("../mm.zig");
+const mm = @import("../mm/mm.zig");
 const pfmdb = @import("pfmdb.zig");
-const bootldr = @import("../bootloader.zig");
+const bootldr = @import("../utils/antboot.zig");
 const bootmem = @import("bootmem.zig");
 
 const assert = std.debug.assert;
@@ -361,7 +361,7 @@ pub fn init() !void {
             ent.physical_start,
             ent.number_of_pages,
         });
-        
+
         if (ent.type != .conventional_memory) {
             _ = totalReservedPages.fetchAdd(@intCast(ent.number_of_pages), .monotonic);
             continue;

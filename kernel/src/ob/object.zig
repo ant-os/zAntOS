@@ -2,7 +2,7 @@
 //! 
 
 const std = @import("std");
-const arch = @import("../arch.zig");
+const arch = @import("../hal/arch/arch.zig");
 
 const Type = enum(u8) {
     thread,

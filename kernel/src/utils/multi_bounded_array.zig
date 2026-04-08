@@ -1,4 +1,4 @@
-// Source: https://github.com/Khitiara/imaginarium/blob/main/src/util/multi_bounded_array.zig
+// Source: https://github.com/Khitiara/imaginarium/bl../ob/main/src/util/multi_bounded_array.zig
 // THIS FILE ALONE IS LICENSED UNDER THE BSD 0-CLAUSE LICENSE
 //
 // Zero-Clause BSD

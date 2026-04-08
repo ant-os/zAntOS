@@ -4,7 +4,7 @@ const std = @import("std");
 const ob = @import("../ob/object.zig");
 const heap = @import("../mm/heap.zig");
 
-const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
+const SpinLock = @import("../hal/spinlock.zig").SpinLock;
 const Driver = @import("Driver.zig");
 const Device = @This();
 

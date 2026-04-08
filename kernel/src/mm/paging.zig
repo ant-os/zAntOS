@@ -1,8 +1,8 @@
 const std = @import("std");
 const pfmdb = @import("pfmdb.zig");
-const mm = @import("../mm.zig");
+const mm = @import("../mm/mm.zig");
 const pframe_alloc = @import("pframe_alloc.zig");
-const arch = @import("../arch.zig");
+const arch = @import("../hal/arch/arch.zig");
 const pte = @import("pte.zig");
 
 const log = std.log.scoped(.paging);

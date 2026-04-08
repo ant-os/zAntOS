@@ -1,6 +1,6 @@
 //! a selection of intrusive collections
 //! these implementations are derived from N00byEdge's work in
-//! https://github.com/FlorenceOS/Florence/blob/aaa5a9e568197ad24780ec9adb421217530d4466/lib/containers/queue.zig
+//! https://github.com/FlorenceOS/Florence/bl../ob/aaa5a9e568197ad24780ec9adb421217530d4466/lib/containers/queue.zig
 //! which was released under the BSD 0-clause
 
 const std = @import("std");

@@ -4,15 +4,14 @@ const std = @import("std");
 const ob = @import("../ob/object.zig");
 const heap = @import("../mm/heap.zig");
 const function = @import("function.zig");
-const irql = @import("../interrupts/irql.zig");
+const hal = @import("../hal/hal.zig");
 const queue = @import("../utils/queue.zig");
-const ANTSTATUS = @import("root").ANTSTATUS;
+const ANTSTATUS = @import("../antk/status.zig").ANTSTATUS;
 
-
-const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
+const SpinLock = @import("../hal/spinlock.zig").SpinLock;
 const Driver = @import("Driver.zig");
 const Device = @import("Device.zig");
-const Mutex = @import("../sync/Mutex.zig");
+const Mutex = @import("../ke/sync/Mutex.zig");
 const Irp = @This();
 
 pub const MAX_MAJOR_FUNCTIONS = function.MAX_MAJOR_FUNCTIONS;

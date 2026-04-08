@@ -3,11 +3,11 @@
 const std = @import("std");
 const ob = @import("../ob/object.zig");
 const heap = @import("../mm/heap.zig");
-const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
+const SpinLock = @import("../hal/spinlock.zig").SpinLock;
 const Irp = @import("Irp.zig");
 const antk = @import("../antk/antk.zig");
-const arch = @import("../arch.zig");
-const ANTSTATUS = @import("root").ANTSTATUS;
+const arch = @import("../hal/arch/arch.zig");
+const ANTSTATUS = @import("../antk/status.zig").ANTSTATUS;
 
 const Driver = @import("Driver.zig");
 

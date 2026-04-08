@@ -1,10 +1,9 @@
 //! ELF Symbols
 
 const std = @import("std");
-const bootmem = @import("../mm/bootmem.zig");
-const bootloader = @import("../bootloader.zig");
+const antboot = @import("../utils/antboot.zig");
 const options = @import("options");
-const logger = @import("../logger.zig");
+const logger = @import("../debug/logger.zig");
 
 const log = std.log.scoped(.elf_symbols);
 
@@ -12,7 +11,7 @@ const MAX_INITRD_FILENAME_LEN = 120;
 
 // get the kernel image as a byte-slice.
 pub noinline fn kernel_image() ![]const u8 {
-    return bootloader.info.kernel_image.base[0..bootloader.info.kernel_image.size];
+    return antboot.info.kernel_image.base[0..antboot.info.kernel_image.size];
 }
 
 pub inline fn section_header(header: *const std.elf.Header, buffer: []const u8, index: u32) ?*const std.elf.Shdr {
@@ -143,7 +142,7 @@ pub noinline fn init() !void {
     initalized = true;
 }
 
-const ktest = @import("../ktest.zig");
+const ktest = @import("../tests/framework.zig");
 
 export fn test_symbol() void {
     std.debug.assert(ktest.enabled);

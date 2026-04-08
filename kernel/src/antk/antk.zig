@@ -1,9 +1,9 @@
 const std = @import("std");
-const arch = @import("../arch.zig");
-const ANTSTATUS = @import("root").ANTSTATUS;
+const arch = @import("../hal/arch/arch.zig");
+const ANTSTATUS = @import("../antk/status.zig").ANTSTATUS;
 const Driver = @import("../io/Driver.zig");
 const Irp = @import("../io/Irp.zig");
-const logger = @import("../logger.zig");
+const logger = @import("../debug/logger.zig");
 
 const log = std.log.scoped(.antkapi);
 

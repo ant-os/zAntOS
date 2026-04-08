@@ -1,0 +1,141 @@
+//! Memory Manager
+
+const std = @import("std");
+const ktest = @import("../tests/framework.zig");
+
+pub const pfmdb = @import("pfmdb.zig");
+pub const paging = @import("paging.zig");
+pub const syspte = @import("syspte.zig");
+pub const vmm = @import("vmm.zig");
+pub const bootmem = @import("bootmem.zig");
+
+pub const Pte = @import("pte.zig").Pte;
+pub const VirtualAddress = paging.VirtualAddress;
+pub const PhysicalAddress = paging.PhysicalAddress;
+pub const PageAttributes = paging.PageAttributes;
+pub const Pfi = paging.Pfi;
+pub const Pfn = pfmdb.Pfn;
+
+pub const PAGE_SHIFT = 12;
+pub const PAGE_SIZE = 0x1000;
+pub const PAGE_ALIGN = std.mem.Alignment.fromByteUnits(PAGE_SIZE);
+
+pub const Order = enum(u5) {
+    pub const raw_max: u5 = 18;
+
+    page = 0,
+    max = raw_max,
+    invalid = std.math.maxInt(u5),
+    _,
+
+    pub inline fn newTruncated(v: u32) Order {
+        return Order.new(
+            if (v > raw_max) raw_max else @truncate(v),
+        ).?;
+    }
+
+    pub inline fn new(v: u5) ?Order {
+        if (v > raw_max) return null;
+        return @enumFromInt(v);
+    }
+
+    pub inline fn raw(self: Order) ?u5 {
+        if (!self.isValid()) return null;
+        return @intFromEnum(self);
+    }
+
+    pub inline fn isValid(self: Order) bool {
+        return @intFromEnum(self) <= raw_max;
+    }
+
+    pub inline fn assertValid(self: Order) void {
+        if (ktest.enabled and !self.isValid()) @panic("invalid order");
+    }
+
+    pub inline fn totalPages(self: Order) u32 {
+        return @as(u32, 1) << self.raw().?;
+    }
+
+    pub fn sub(self: Order, off: u5) ?Order {
+        self.assertValid();
+
+        return Order.new(self.raw().? - off);
+    }
+
+    pub fn add(self: Order, off: u5) ?Order {
+        self.assertValid();
+
+        return Order.new(self.raw().? + off);
+    }
+};
+
+pub const PhysicalAddr = packed union {
+    typed: packed struct(u64) {
+        pageoff: u12 = 0,
+        pfn: pfmdb.Pfn,
+        unused: u20 = 0,
+    },
+    raw: u64,
+    ptr: [*]const u8,
+};
+
+pub const LocalPool = struct {
+    fixed_alloc: std.heap.FixedBufferAllocator,
+};
+
+pub fn map(paddr: paging.PhysicalAddress, size: usize, attrs: paging.PageAttributes) ![*]u8 {
+    if ((size + paddr.split.pageoffset) >= 0x1000) {
+        const pages = std.mem.alignForward(usize, size + paddr.split.pageoffset, PAGE_SIZE) / PAGE_SIZE;
+        const area = try vmm.Area.reserve(
+            pages,
+            0xFFFF_8000_0000_0000,
+            0xFFFF_9FFF_FFFF_0000,
+            attrs,
+            .{ .uint = std.mem.bytesToValue(u64, "vIOMAP  ") },
+        );
+
+        try paging.mapRegion(
+            std.mem.alignBackward(usize, paddr.uint, PAGE_SIZE),
+            area.start,
+            pages,
+            attrs,
+        );
+
+        return area.asPointer()[paddr.split.pageoffset..];
+    }
+
+    const vpage = &(try syspte.reserve(1))[0];
+    vpage.present = .{
+        .writable = attrs.writable,
+        .write_through = attrs.write_through,
+        .disable_cache = attrs.no_cache,
+        .no_execute = attrs.no_execute,
+        .user = attrs.user,
+        .addr = @intCast(paddr.split.pfn.raw()),
+    };
+
+    flushLocalTlb();
+
+    return vpage.virtAddr().?.ptr[paddr.split.pageoffset..];
+}
+
+pub inline fn flushLocalTlb() void {
+    // zig fmt: off
+    asm volatile (
+        \\movq %%cr3, %%rax
+        \\movq %%rax, %%cr3
+        ::: .{ .rax = true, .memory = true }
+    );
+    // zig fmt: on
+}
+
+pub fn unmap(vaddr: paging.VirtualAddress, size: usize) !void {
+    if ((size + vaddr.split.pageoffset) >= 0x1000) {
+        const area = try vmm.Area.resolve(vaddr.uint);
+        return area.delete();
+    }
+
+    const pte: [*]Pte = @ptrCast(vaddr.getPte());
+
+    syspte.release(pte[0..1]);
+}

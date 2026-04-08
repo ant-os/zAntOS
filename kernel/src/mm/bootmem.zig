@@ -1,18 +1,18 @@
 //! Boot Memory ALlocator
-//! 
+//!
 //! A fixed buffer allocator for the biggest free physical memory region found
 //! in the efi memory map provided by the loader (antboot2).
-//! 
+//!
 //! It also has an enabled flag and all allocator functions panic if enabled is false.
-//! 
+//!
 //! BOOTMEM can be disabled using the disable() function which will return the slice of memory used
 //! for possible reserving of that region in later-stage allocators for physical memory.
-//! 
+//!
 
 const std = @import("std");
 const builtin = @import("builtin");
-const bootloader = @import("../bootloader.zig");
-const mm = @import("../mm.zig");
+const bootloader = @import("../utils/antboot.zig");
+const mm = @import("../mm/mm.zig");
 
 const log = std.log.scoped(.bootmem);
 
@@ -24,7 +24,7 @@ var selected_mmap_entry: usize = 0;
 
 pub noinline fn enterSealedRegion() void {
     if (builtin.mode != .Debug) return;
-    
+
     if (!enabled) @panic("bootmem not enabled");
     if (seal_base_allocs != null) @panic("already in sealed region");
 
@@ -34,9 +34,9 @@ pub noinline fn enterSealedRegion() void {
 pub noinline fn leaveAndDetectLeaks() void {
     if (builtin.mode != .Debug) return;
 
-    if (seal_base_allocs == null) @panic("not not in sealed region"); 
+    if (seal_base_allocs == null) @panic("not not in sealed region");
 
-//    std.log.debug("region = {d}, endidx = {d}", .{region.?, alloc.end_index});
+    //    std.log.debug("region = {d}, endidx = {d}", .{region.?, alloc.end_index});
     if (num_allocs > seal_base_allocs.?) @panic("bootmem memory leak detected");
 
     seal_base_allocs = null;
@@ -45,7 +45,7 @@ pub noinline fn leaveAndDetectLeaks() void {
 pub noinline fn managesPointer(ptr: u64) bool {
     @setRuntimeSafety(false);
     return alloc.ownsPtr(@ptrFromInt(ptr));
-} 
+}
 
 pub inline fn startsAt(ptr: u64) bool {
     const current: u64 = @intFromPtr(alloc.buffer.ptr);
@@ -85,14 +85,14 @@ pub fn disable() ?struct { mm.PhysicalAddr, u32 } {
 
     const pages = mm.PAGE_ALIGN.forward(alloc.end_index) >> mm.PAGE_SHIFT;
 
-    return .{ .{ .raw = @intFromPtr(alloc.buffer.ptr) }, @intCast(pages) }; 
+    return .{ .{ .raw = @intFromPtr(alloc.buffer.ptr) }, @intCast(pages) };
 }
 
 pub const allocator: std.mem.Allocator = .{
     .ptr = undefined,
     .vtable = &std.mem.Allocator.VTable{
         .alloc = &vt_alloc,
-        .free =  &vt_free,
+        .free = &vt_free,
         .remap = &vt_remap,
         .resize = &vt_resize,
     },

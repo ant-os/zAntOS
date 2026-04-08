@@ -2,10 +2,10 @@ const std = @import("std");
 const pfmdb = @import("pfmdb.zig");
 const paging = @import("paging.zig");
 const pframe_alloc = @import("pframe_alloc.zig");
-const mm = @import("../mm.zig");
+const mm = @import("../mm/mm.zig");
 const heap = @import("heap.zig");
 const queue = @import("../utils/queue.zig");
-const SpinLock = @import("../sync/spin_lock.zig").SpinLock;
+const SpinLock = @import("../hal/spinlock.zig").SpinLock;
 
 pub const AreaList = queue.DoublyLinkedList(Area, "node");
 
