@@ -28,17 +28,17 @@ fn initPageFrame(
         break :getRootOrder real_root.info.maximum_order;
     };
 
-    if (!root) log.debug(
-        "initalizing {s} page frame at PFN {d} with order {any}(max {any}), origin frame of {any}, tagged {s}.",
-        .{
-            if (root) "root" else "leaf",
-            frame.pfn().?.raw(),
-            order.raw(),
-            max_order.raw(),
-            origin.raw(),
-            @tagName(tag),
-        },
-    );
+    // if (!root) log.debug(
+    //     "initalizing {s} page frame at PFN {d} with order {any}(max {any}), origin frame of {any}, tagged {s}.",
+    //     .{
+    //         if (root) "root" else "leaf",
+    //         frame.pfn().?.raw(),
+    //         order.raw(),
+    //         max_order.raw(),
+    //         origin.raw(),
+    //         @tagName(tag),
+    //     },
+    // );
 
     frame.* = .{ .info = .{
         .tag = tag,
@@ -65,10 +65,10 @@ pub fn getBuddyOfPfnForOrder(pfn: pfmdb.Pfn, order: mm.Order) ?pfmdb.Pfn {
 }
 
 pub fn splitFrameAssumeUnused(frame: *pfmdb.PageFrame, tok: pfmdb.WriteToken) !void {
-    log.debug("trying to split frame at PFN {d} with order {any}", .{
-        frame.pfn().?.raw(),
-        frame.info.order.raw(),
-    });
+    // log.debug("trying to split frame at PFN {d} with order {any}", .{
+    //     frame.pfn().?.raw(),
+    //     frame.info.order.raw(),
+    // });
     std.debug.assert(frame.getState() != .not_present);
 
     const order = frame.info.order.sub(1) orelse return error.PageFrame;
@@ -291,10 +291,10 @@ pub fn freeWithMergeLimit(pfn: pfmdb.Pfn, tok: pfmdb.WriteToken, limit: Limit) !
             assert(frame.info.order == old_order);
             assert(buddy.info.order == old_order);
 
-            log.debug("merging PFN {d} and its buddy into one order {d} frame", .{
-                frame.pfn().?.raw(),
-                new_order.raw().?,
-            });
+            // log.debug("merging PFN {d} and its buddy into one order {d} frame", .{
+            //     frame.pfn().?.raw(),
+            //     new_order.raw().?,
+            // });
 
             getGlobalFreelistForOrder(old_order).?.remove(&buddy.node);
 

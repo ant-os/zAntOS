@@ -215,7 +215,7 @@ pub fn dumpSegments() void {
 }
 
 pub fn allocate(unaligned_size: usize, alignment: std.mem.Alignment, return_addr: usize) ![*]u8 {
-    log.debug("allocate({d}, align: {any}) called.", .{ unaligned_size, alignment });
+    // log.debug("allocate({d}, align: {any}) called.", .{ unaligned_size, alignment });
     _ = return_addr;
 
     lock();
@@ -283,7 +283,7 @@ fn resize(
     var size = alignment.forward(new_len);
     if (size < HEAP_MINIMUM_SIZE) size = HEAP_MINIMUM_SIZE;
 
-    log.debug("TRACE: resize([{d}]{any}, {d}) called", .{ memory.len, memory.ptr, size });
+    // log.debug("TRACE: resize([{d}]{any}, {d}) called", .{ memory.len, memory.ptr, size });
 
     lock();
     defer unlock();
@@ -318,7 +318,7 @@ fn remap(
     new_len: usize,
     ret_addr: usize,
 ) ?[*]u8 {
-    log.debug("remap() called", .{});
+    // log.debug("remap() called", .{});
 
     _ = memory;
     _ = alignment;
@@ -351,7 +351,7 @@ fn free(
     alignment: std.mem.Alignment,
     ret_addr: usize,
 ) void {
-    log.debug("free() called", .{});
+    // log.debug("free() called", .{});
 
     lock();
     defer unlock();
