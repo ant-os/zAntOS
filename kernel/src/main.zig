@@ -34,6 +34,7 @@ pub const Device = @import("io/Device.zig");
 pub const Irp = @import("io/Irp.zig");
 pub const Scheduler = @import("sched/scheduler.zig");
 pub const Process = @import("sched/process.zig");
+pub const Thread = @import("sched/thread.zig");
 pub const Mutex = @import("ke/sync/Mutex.zig");
 pub const apic = @import("hal/apic/apic.zig");
 pub const tsc = @import("hal/arch/tsc.zig");

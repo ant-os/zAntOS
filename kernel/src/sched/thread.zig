@@ -122,15 +122,14 @@ pub fn printIdent(self: *Thread, w: *std.Io.Writer) !void {
     if (self.name != null) try w.print(" ('{s}')", .{self.name.?});
 }
 
-pub fn ob_deinit(hdr: *ob.Header) void {
-    std.debug.assert(hdr.type == .thread);
 
-    const self: *Thread = @fieldParentPtr("header", hdr);
-
+pub fn ob_deinit(self: *Thread) callconv(arch.cc) bool  {
     std.debug.assert(self.getState() != .running);
 
     heap.allocator.free(self.stack.?);
     heap.allocator.destroy(self);
+
+    return true;
 }
 
 

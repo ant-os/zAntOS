@@ -393,3 +393,4 @@ pub export fn antkInitalizeSystem(_: ?*anyopaque) callconv(arch.cc_unaligned) no
     init() catch |e| std.debug.panic("init failed with error: {s}", .{@errorName(e)});
     arch.halt_cpu();
 }
+

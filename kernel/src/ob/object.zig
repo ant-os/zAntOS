@@ -1,144 +1,116 @@
-//! Object 
-//! 
+//! Object
+//!
 
 const std = @import("std");
 const arch = @import("../hal/arch/arch.zig");
 const heap = @import("kmod").heap;
 
-const Type = enum(u8) {
-    thread,
-    process,
-    hardware_io,
-    driver,
-    device,
-    _,
+pub const BaseVTable = extern struct {
+    deinit: ?*const fn (*anyopaque) callconv(arch.cc) bool = null,
 };
 
-pub const VTable = struct {
-    deinit: *const fn(*anyopaque) callconv(arch.cc) void,
-};
+pub const Type = extern struct {
+    pub const @"type": **Type = &ObObjectType;
 
-pub const ObType = extern struct {
     size: usize,
     instance_count: std.atomic.Value(u64),
-    // ...
+    vtable: BaseVTable,
 };
 
 // header|body|name
 // deinit, enumerate, open, etc.
 
-pub fn allocate(
-    comptime T: ?type,
-    @"type": *ObType,
-    size: usize,
-    name: ?[]const u8,
-) !*Instance(T) {
-    if ((T == null and size < @sizeOf(T.?)) or size < @"type".size) return error.InvalidParameter;
+pub inline fn getAuxilliaryData(obj: *anyopaque) []u8 {
+    const rawPointer: [*]u8 = @ptrFromInt(@intFromPtr(obj) + @sizeOf(Header) + getHeader(obj).size);
+    return rawPointer[0..getHeader(obj).auxilliary_size];
+}
 
-    referenceByPointer(@ptrCast(@"type"));
-    errdefer unref(@ptrCast(@"type"));
-
-    const nameLenght = if (name == null) 0 else name.?.len;
-    const allocationSize = @sizeOf(Header) + size + nameLenght;
+pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, opt_name: ?[]const u8) !*T {
+    const auxiliary_size = if (opt_name) |name| name.len + 1 else 0;
+    const size = @max(@sizeOf(T), if (@"type" != null) @"type".size else 0, std.mem.alignForward(usize, size_, 0x10));
+    const allocationSize = @sizeOf(Header) + size + auxiliary_size;
     const allocation = try heap.allocator.alignedAlloc(u8, .@"16", allocationSize);
     @memset(allocation, 0);
     const header: *Header = @ptrCast(allocation.ptr);
-    const instance: *Instance(null) = @ptrFromInt(@intFromPtr(allocation.ptr) + @sizeOf(Header));
+    const body: *T = @ptrFromInt(@intFromPtr(allocation.ptr) + @sizeOf(Header));
+    const auxiliaryData: [*]u8 = @ptrFromInt(@intFromPtr(allocation.ptr) + @sizeOf(Header) + size);
+
+    if (type != null) reference(@ptrCast(@"type"));
+
     header.* = .{
-        .@"type" = @"type",
-        .ptr_count = .init(1),
-        .handle_count = 0,
-        .name_len = nameLenght,
+        .type = @"type",
         .size = size,
+        .auxiliary_size = auxiliary_size,
+        .ptr_count = .init(1),
+        .handle_count = .init(0),
+        .flags = .{},
+        .name_len = if (opt_name) |name| name.len else 0,
     };
-    
-    if (name) @memcpy(getName(instance).?, name.?);
 
-    return instance;
+    if (opt_name) |name| @memcpy(auxiliaryData[0..name.len], name);
+
+    return body;
 }
 
-pub inline fn getName(obj: *Instance(null)) ?[]const u8 {
-    if (obj._header().name_len == 0) return null;
-    const location: [*]const u8 = @ptrFromInt(@intFromPtr(obj) +  obj._header().size);
-    return location[0..obj._header().name_len];
+pub inline fn getName(obj: *anyopaque) ?[]const u8 {
+    const location: [*]const u8 = getAuxilliaryData(obj);
+    return location[0..getHeader(obj).name_len];
 }
 
-pub fn Instance(comptime T: ?type) type { 
-    if (@alignOf(T) > 16) @compileError("alignment limit exceeded");
-    if (@sizeOf(T) <= 16) @compileError("object must be at least 16 bytes");
-    return struct {
-        inner: (T orelse u64) align(0x10),
-
-        inline fn coerce(self: anytype) *@This() {
-            return @as(*@This(), @constCast(@volatileCast(self)));
-        }
-
-        pub inline fn get(self: anytype) *(T orelse void) {
-            comptime if (T == null) @compileError("get() called on untyped instance");
-            return @ptrCast(coerce(self));
-        }
-
-        pub inline fn _header(self: anytype) *Header{
-            return @ptrFromInt(@intFromPtr(coerce(self)) - @sizeOf(Header));
-        }
-
-        pub inline fn raw(self: anytype) *align(0x10) void {
-            return @ptrCast(coerce(self));
-        }
-    };
+inline fn getHeader(obj: *anyopaque) *Header {
+    return @ptrFromInt(@intFromPtr(obj) - @sizeOf(Header));
 }
 
-pub fn referenceByPointer(obj: *Instance(null)) void {
-    if (obj == @as(*Instance(null), @ptrCast(&ObObjectType.instance_count))) return;
-    obj._header().ptr_count.fetchAdd(1, .seq_cst);
+pub fn reference(obj: *anyopaque) void {
+    if (obj == ObObjectType) return;
+    getHeader(obj).ptr_count.fetchAdd(1, .seq_cst);
 }
 
-pub fn unref(obj: *Instance(null)) void {
-    const old = obj._header().ptr_count.fetchSub(1, .seq_cst);
+pub fn unreference(obj: *anyopaque) void {
+    const old = getHeader(obj).ptr_count.fetchSub(1, .seq_cst);
     // old == 0 --> frozen!
     if (old == 1) {
         // TODO: do cleanup
     }
 }
 
-pub export var ObObjectType: *ObType = &(extern struct {
-    const NAME: [10] u8 = "Object Type"[0..10].*;
+pub export var ObObjectType: ?*Type = null;
+pub export var ObThreadType: ?*Type = null;
+pub export var ObProcessType: ?*Type = null;
+pub export var ObDeviceType: ?*Type = null;
+pub export var ObDriverType: ?*Type = null;
 
-    header: Header = .{
-        .@"type" = undefined,
-        .size = @sizeOf(ObType),
-        .ptr_count = 0,
-        .handle_count = 0,
-        .name_len = NAME.len,
-    },
-    body: ObType = .{
-        .size = @sizeOf(ObType),
-        .instance_count = .init(1),
-    },
-    name: [NAME.len]u8 = NAME,
-}{}).body;
+pub fn createType(name: []const u8, size: usize, vtable: BaseVTable) !*Type {
+    const ty = try allocate(Type, ObObjectType, @sizeOf(Type), name);
+    ty.* = .{
+        .instance_count = .init(0),
+        .size = size,
+        .vtable = vtable,
+    };
+}
 
+pub fn initObjectTypes() !void {
+    const Thread = @import("kmod").Thread;
+
+    ObObjectType = createType("Object Type", @sizeOf(Type), .{});
+    getHeader(@ptrCast(ObObjectType)).type.? = .@"type".*;
+
+    ObThreadType = createType("Thread", @sizeOf(Thread), .{ .deinit = &Thread.ob_deinit });
+}
+
+
+pub const Flags = packed struct(u32) {
+    frozen: bool = false,
+    _: u31 = 0,
+};
 
 pub const Header = extern struct {
     _: void align(0x10) = undefined,
-    @"type": *ObType,
+    type: ?*Type,
     size: usize,
+    auxilliary_size: usize,
+    flags: Flags,
     ptr_count: std.atomic.Value(u64),
-    handle_count: u64 = 0,
-    name_len: usize = 0,
-
-    pub fn ref(self: *Header) void {
-        self.ptr_count += 1;
-    }
-
-    pub fn unref(self: *Header) void {
-        if (self.ptr_count <= 1) return self.vtable.deinit(self);
-        self.ptr_count -= 1;
-    }
+    handle_count: u64,
+    name_len: usize,
 };
-
-comptime {
-    @compileLog(@sizeOf(Header));
-    @compileLog(@alignOf(Header));
-}
-

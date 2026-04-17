@@ -180,6 +180,7 @@ pub fn init(self: *Scheduler) !void {
     _ = self;
 }
 
+
 pub fn yield() void {
     apic.send_ipi(.{
         .vector = 0x20,
