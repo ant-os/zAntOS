@@ -4,6 +4,7 @@
 const std = @import("std");
 const arch = @import("../hal/arch/arch.zig");
 const heap = @import("kmod").heap;
+const log = std.log.scoped(.object_manager);
 
 pub const BaseVTable = extern struct {
     deinit: ?*const fn (*anyopaque) callconv(arch.cc) bool = null,
@@ -11,7 +12,6 @@ pub const BaseVTable = extern struct {
 
 pub const Type = extern struct {
     pub const @"type": **Type = &ObObjectType;
-
     size: usize,
     instance_count: std.atomic.Value(u64),
     vtable: BaseVTable,
@@ -27,7 +27,7 @@ pub inline fn getAuxilliaryData(obj: *anyopaque) []u8 {
 
 pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, opt_name: ?[]const u8) !*T {
     const auxiliary_size = if (opt_name) |name| name.len + 1 else 0;
-    const size = @max(@sizeOf(T), if (@"type" != null) @"type".size else 0, std.mem.alignForward(usize, size_, 0x10));
+    const size = @max(@sizeOf(T), if (@"type" != null) @"type".?.size else 0, std.mem.alignForward(usize, size_, 0x10));
     const allocationSize = @sizeOf(Header) + size + auxiliary_size;
     const allocation = try heap.allocator.alignedAlloc(u8, .@"16", allocationSize);
     @memset(allocation, 0);
@@ -35,15 +35,15 @@ pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, opt_name: ?[]co
     const body: *T = @ptrFromInt(@intFromPtr(allocation.ptr) + @sizeOf(Header));
     const auxiliaryData: [*]u8 = @ptrFromInt(@intFromPtr(allocation.ptr) + @sizeOf(Header) + size);
 
-    if (type != null) reference(@ptrCast(@"type"));
+    if (@"type" != null) referenceRaw(@ptrCast(@"type"));
 
     header.* = .{
         .type = @"type",
         .size = size,
-        .auxiliary_size = auxiliary_size,
+        .auxilliary_size = auxiliary_size,
         .ptr_count = .init(1),
         .handle_count = .init(0),
-        .flags = .{},
+        .flags = .{ .typed = .{} },
         .name_len = if (opt_name) |name| name.len else 0,
     };
 
@@ -61,16 +61,64 @@ inline fn getHeader(obj: *anyopaque) *Header {
     return @ptrFromInt(@intFromPtr(obj) - @sizeOf(Header));
 }
 
-pub fn reference(obj: *anyopaque) void {
-    if (obj == ObObjectType) return;
-    getHeader(obj).ptr_count.fetchAdd(1, .seq_cst);
+pub fn referenceRaw(obj: *anyopaque) void {
+    if (obj == @as(*anyopaque, @ptrCast(ObObjectType.?))) return;
+    _ = getHeader(obj).ptr_count.fetchAdd(1, .seq_cst);
 }
 
-pub fn unreference(obj: *anyopaque) void {
-    const old = getHeader(obj).ptr_count.fetchSub(1, .seq_cst);
-    // old == 0 --> frozen!
-    if (old == 1) {
-        // TODO: do cleanup
+pub fn referenceObject(obj: *anyopaque, ty: *Type) error{InvalidParameter}!void {
+    log.debug("ref(header={any}, ty={any})", .{getHeader(obj), ty});
+    if (getHeader(obj).type != ty) return error.InvalidParameter;
+    referenceRaw(obj);
+}
+
+pub fn referenceKnownObject(obj: *anyopaque, comptime T: type) error{InvalidParameter}!*T {
+    if (!@hasDecl(T, "knownObjectType")) @compileError("invalid known object type");
+    const knownType: *KnownTypeInstance = &@field(T, "knownObjectType");
+
+    if (getHeader(obj).type != knownType.getPointer()) return error.InvalidParameter;
+    referenceRaw(obj);
+    return @ptrCast(@alignCast(obj));
+}
+
+pub fn unreferenceObject(comptime T: type, obj: *T) void {
+    referenceRaw(@ptrCast(obj));
+}
+
+pub fn unreferenceRaw(obj: *anyopaque) void {
+    const header = getHeader(obj);
+    var oldValue: u64 = 1;
+    while (header.ptr_count.cmpxchgWeak(
+        oldValue,
+        oldValue - 1,
+        .seq_cst,
+        .monotonic,
+    )) |val| oldValue = val{
+        // the object is already being cleaned up.
+        if (val == 0) {
+            return;
+        }};
+
+    if (oldValue == 1) {
+        const ty = if (header.type == null) {
+            log.warn("object with no type leaked, pointer=0x{x}", .{@intFromPtr(obj)});
+            return;
+        } else header.type.?;
+
+        // set the `delete_in_progress` flag
+        if (header.flags.set(.delete_in_progress, .acquire) == true) return;
+
+        if (ty.vtable.deinit) |deinit_cb| deinit_cb(obj);
+
+        // the object was rescued, return instead of deleting.
+        if (header.ptr_count.load(.seq_cst) > 0) {
+            // unset the `delete_in_progress` flag (asserting that it was set) and returns.
+            std.debug.assert(header.flags.unset(.delete_in_progress, .release));
+            return;
+        }
+
+        // TODO: defered freeing.
+        heap.allocator.free(header.allocation());
     }
 }
 
@@ -87,21 +135,47 @@ pub fn createType(name: []const u8, size: usize, vtable: BaseVTable) !*Type {
         .size = size,
         .vtable = vtable,
     };
+    return ty;
 }
 
 pub fn initObjectTypes() !void {
-    const Thread = @import("kmod").Thread;
+    ObObjectType = try createType("Object Type", @sizeOf(Type), .{});
+    getHeader(@ptrCast(ObObjectType)).type = ObObjectType;
 
-    ObObjectType = createType("Object Type", @sizeOf(Type), .{});
-    getHeader(@ptrCast(ObObjectType)).type.? = .@"type".*;
+    try registerKnownType(.thread, @import("kmod").Thread);
+    try registerKnownType(.process, @import("kmod").Process);
+    try registerKnownType(.device, @import("kmod").Device);
+    try registerKnownType(.driver, @import("kmod").Driver);
+    try registerKnownType(.hwio, @import("kmod").HardwareIo);
 
-    ObThreadType = createType("Thread", @sizeOf(Thread), .{ .deinit = &Thread.ob_deinit });
 }
 
+pub const KnownTypeInstance = struct {
+    name: []const u8,
+    base_vtable: BaseVTable = .{ .deinit = null },
+    private: ?*Type = null,
+
+    pub fn getPointer(self: *const KnownTypeInstance) *Type {
+        return self.private orelse std.debug.panic("object type \"{s}\" not registered", .{self.name});
+    }
+};
+
+pub inline fn registerKnownType(comptime tag: @TypeOf(.enum_literal), comptime T: type) !void {
+    _ = tag;
+
+    if (!@hasDecl(T, "knownObjectType")) @compileError("invalid known object type");
+
+    const knownType: *KnownTypeInstance = &@field(T, "knownObjectType");
+
+    knownType.private = try createType(knownType.name, @sizeOf(T), knownType.base_vtable);
+
+    // DONE
+}
 
 pub const Flags = packed struct(u32) {
     frozen: bool = false,
-    _: u31 = 0,
+    delete_in_progress: bool = false,
+    _: u30 = 0,
 };
 
 pub const Header = extern struct {
@@ -109,8 +183,24 @@ pub const Header = extern struct {
     type: ?*Type,
     size: usize,
     auxilliary_size: usize,
-    flags: Flags,
+    flags: extern union {
+        typed: Flags,
+        atomic: std.atomic.Value(u32),
+
+        pub fn set(self: *@This(), comptime flag: std.meta.FieldEnum(Flags), comptime order: std.builtin.AtomicOrder) bool {
+            return self.atomic.bitSet(@bitOffsetOf(Flags, @tagName(flag)), order) == 1;
+        }
+
+        pub fn unset(self: *@This(), comptime flag: std.meta.FieldEnum(Flags), comptime order: std.builtin.AtomicOrder) bool {
+            return self.atomic.bitReset(@bitOffsetOf(Flags, @tagName(flag)), order) == 1;
+        }
+    },
     ptr_count: std.atomic.Value(u64),
-    handle_count: u64,
+    handle_count: std.atomic.Value(u64),
     name_len: usize,
+
+    pub fn allocation(self: *Header) []u8 {
+        const base: [*]u8 = @ptrCast(self);
+        return base[0..(@sizeOf(Header) + self.size + self.auxilliary_size)];
+    }
 };

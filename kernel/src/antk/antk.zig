@@ -4,6 +4,7 @@ const ANTSTATUS = @import("../antk/status.zig").ANTSTATUS;
 const Driver = @import("../io/Driver.zig");
 const Irp = @import("../io/Irp.zig");
 const logger = @import("../debug/logger.zig");
+const ob = @import("kmod").ob;
 
 const log = std.log.scoped(.antkapi);
 
@@ -99,9 +100,13 @@ pub export fn IrpCreate(stack_size: u8, c_outIrp: ?**Irp) ANTSTATUS {
     return .success;
 }
 
-pub export fn IoInstallHandler(c_DriverObject: ?*Driver, c_MajorFunc: u8, handler: Driver.Callback) ANTSTATUS {
-    const driver = c_DriverObject orelse return .invalid_parameter;
-    if (driver.header.type != .driver) return .invalid_parameter;
+pub export fn IoInstallHandler(c_DriverObject: ?*anyopaque, c_MajorFunc: u8, handler: Driver.Callback) ANTSTATUS {
+    const driver = ob.referenceKnownObject(
+        c_DriverObject orelse return .invalid_parameter,
+        Driver,
+    ) catch return .invalid_parameter;
+
+    defer ob.unreferenceObject(Driver, driver);
 
     const func = std.enums.fromInt(Irp.MajorFunction.Tag, c_MajorFunc) orelse return .invalid_parameter;
 

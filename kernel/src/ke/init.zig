@@ -114,11 +114,11 @@ pub noinline fn init() !void {
 
     try vfs.init();
 
-    try vfs.attach("//Devices/GLOBALROOT/TestDevice", &mydev.header);
+    try vfs.attach("//Devices/GLOBALROOT/TestDevice", @ptrCast(mydev));
 
-    const vfsdev: *Device = @fieldParentPtr(
-        "header",
-        (try vfs.resolve("//Devices/GLOBALROOT/TestDevice")) orelse @panic("no object bound to vfs path"),
+    const vfsdev: *Device = try ob.referenceKnownObject(
+        try vfs.resolve("//Devices/GLOBALROOT/TestDevice") orelse @panic("no object bound to vfs path"),
+        Device,
     );
 
     klog.info("result translated to device object: {any}", .{vfsdev});
@@ -190,7 +190,6 @@ pub fn threadFunc(_: ?*anyopaque) callconv(.c) noreturn {
         std.atomic.spinLoopHint();
     }
 }
-
 
 extern fn uacpi_free_id_string(id: *IdString) callconv(.c) void;
 
@@ -393,4 +392,3 @@ pub export fn antkInitalizeSystem(_: ?*anyopaque) callconv(arch.cc_unaligned) no
     init() catch |e| std.debug.panic("init failed with error: {s}", .{@errorName(e)});
     arch.halt_cpu();
 }
-

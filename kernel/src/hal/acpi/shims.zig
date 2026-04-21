@@ -11,6 +11,7 @@ const Thread = @import("kmod").Scheduler.Thread;
 const HardwareIo = @import("../../io/abstracthw.zig");
 const heap = @import("../../mm/heap.zig");
 const SpinLock = @import("../../hal/spinlock.zig").SpinLock;
+const ob = @import("kmod").ob;
 
 const cc = std.builtin.CallingConvention.c;
 
@@ -91,7 +92,7 @@ comptime {
 
 export fn uacpi_kernel_pci_device_close(hwio: *HardwareIo) void {
     trace(@src(), .{hwio.device});
-    hwio.header.unref();
+    ob.unreferenceObject(HardwareIo, hwio);
 }
 
 export fn uacpi_kernel_io_map(base: u64, len: usize, out_hwio: **HardwareIo) callconv(cc) uacpi.uacpi_status {
@@ -106,8 +107,8 @@ export fn uacpi_kernel_io_map(base: u64, len: usize, out_hwio: **HardwareIo) cal
 }
 
 export fn uacpi_kernel_io_unmap(hwio: *HardwareIo) callconv(cc) uacpi.uacpi_status {
-    trace(@src(), .{hwio.header});
-    hwio.header.unref();
+    trace(@src(), .{hwio});
+    ob.unreferenceObject(HardwareIo, hwio);
     return .ok;
 }
 

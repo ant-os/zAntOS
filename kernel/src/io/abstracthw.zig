@@ -27,13 +27,11 @@ pub const InternalDevice = union(enum) {
     },
 };
 
-header: ob.Header = .{
-    .type = .hardware_io,
-    .handle_count = 0,
-    .vtable = .{
-        .deinit = &ob_deinit,
-    },
-},
+pub var knownObjectType: ob.KnownTypeInstance = .{
+    .name = "Hardware I/O",
+    .base_vtable = .{},
+};
+
 device: InternalDevice,
 
 pub fn read(self: *HardwareIo, comptime T: type, offset: usize) !T {
@@ -63,22 +61,10 @@ pub fn write(self: *HardwareIo, comptime T: type, offset: usize, value: T) !void
     }
 }
 
-var pool: std.heap.MemoryPool(HardwareIo) = .init(heap.allocator);
-
 pub fn fromInternal(dev: InternalDevice) !*HardwareIo {
-    const self = try pool.create();
+    const self = try ob.allocate(HardwareIo, knownObjectType.getPointer(), @sizeOf(HardwareIo), null);
     self.* = .{
         .device = dev,
     };
     return self;
-}
-
-pub fn ob_deinit(hdr: *ob.Header) void {
-    std.debug.assert(hdr.type == .hardware_io);
-
-    const self: *HardwareIo = @fieldParentPtr("header", hdr);
-
-    log.debug("deinit {any}", .{self});
-
-    pool.destroy(self);
 }

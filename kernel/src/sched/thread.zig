@@ -61,12 +61,13 @@ pub const Priority = enum(u8) {
     }
 };
 
-header: ob.Header = .{
-    .type = .thread,
-    .vtable = .{
-        .deinit = &ob_deinit,
+pub var knownObjectType: ob.KnownTypeInstance = .{
+    .name = "Thread",
+    .base_vtable = .{
+        .deinit = @ptrCast(&ob_deinit),
     },
-},
+};
+
 id: Id,
 process: *Process,
 priority: Priority = .normal,
@@ -90,12 +91,16 @@ pub fn getState(self: *const Thread) State {
     return self.state.load(.seq_cst);
 }
 
+/// NOTE: The Process lock must be held by the caller
 pub fn internalCreateNoAttach(
     parent: *Process,
     stack: []u8,
     initial_context: ?Context,
 ) !*Thread {
-    const self = try heap.allocator.create(Thread);
+
+    try ob.referenceObject(@ptrCast(parent), Process.knownObjectType.getPointer());
+
+    const self = try ob.allocate(Thread, knownObjectType.getPointer(), @sizeOf(Thread), null);
     self.* = .{
         .id = .{
             .split = .{
@@ -122,14 +127,10 @@ pub fn printIdent(self: *Thread, w: *std.Io.Writer) !void {
     if (self.name != null) try w.print(" ('{s}')", .{self.name.?});
 }
 
-
-pub fn ob_deinit(self: *Thread) callconv(arch.cc) bool  {
+pub fn ob_deinit(self: *Thread) callconv(arch.cc) bool {
     std.debug.assert(self.getState() != .running);
 
     heap.allocator.free(self.stack.?);
-    heap.allocator.destroy(self);
 
     return true;
 }
-
-

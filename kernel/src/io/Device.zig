@@ -13,19 +13,18 @@ pub const Location = enum(u64) { _ };
 var global_list: std.DoublyLinkedList = .{};
 var global_lock: SpinLock = .{};
 
-header: ob.Header = .{
-    .type = .device,
-    .vtable = .{
-        .deinit = &ob_deinit,
-    },
-},
+pub var knownObjectType: ob.KnownTypeInstance = .{
+    .name = "Device",
+    .base_vtable = .{},
+};
+
 name: []const u8,
 driver: ?*Driver = null,
 bus: ?*Device,
 node: std.DoublyLinkedList.Node = .{},
 
 pub fn create(name: []const u8, bus: ?*Device) !*Device {
-    const self = try heap.allocator.create(Device);
+    const self = try ob.allocate(Device, knownObjectType.getPointer(), @sizeOf(Device), null);
     self.* = .{
         .name = name,
         .bus = bus,
@@ -36,11 +35,4 @@ pub fn create(name: []const u8, bus: ?*Device) !*Device {
     global_lock.unlock();
 
     return self;
-}
-
-pub fn ob_deinit(hdr: *ob.Header) void {
-    std.debug.assert(hdr.type == .device);
-
-    const self: *Device = @fieldParentPtr("header", hdr);
-    heap.allocator.destroy(self);
 }

@@ -16,7 +16,7 @@ pub const Node = struct {
         hardlink: *Node,
         exit: void,
     } = .{ .normal = .{} },
-    object: ?*ob.Header = null,
+    object: ?*anyopaque = null,
 };
 
 var global_lock: ?*Mutex = null;
@@ -35,14 +35,14 @@ pub fn init() !void {
     try root.payload.normal.put(heap.allocator, "", vfsroot);
 }
 
-pub fn resolve(path: []const u8) !?*ob.Header {
+pub fn resolve(path: []const u8) !?*anyopaque {
     try global_lock.?.lock();
     defer global_lock.?.unlock();
 
     return (try resolveNodeNoLock(path, false)).object;
 }
 
-pub fn attach(path: []const u8, obj: *ob.Header) !void {
+pub fn attach(path: []const u8, obj: *anyopaque) !void {
     try global_lock.?.lock();
     defer global_lock.?.unlock();
 

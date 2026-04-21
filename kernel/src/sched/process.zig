@@ -18,6 +18,13 @@ var last_id: std.atomic.Value(u16) = .init(0);
 
 pub var initialSystemProcess: *Process = undefined;
 
+pub var knownObjectType: ob.KnownTypeInstance = .{
+    .name = "Process",
+    .base_vtable = .{
+        .deinit = @ptrCast(&ob_deinit),
+    },
+};
+
 pub const State = enum(u8) {
     invalid = 0,
     active,
@@ -26,12 +33,6 @@ pub const State = enum(u8) {
     _,
 };
 
-header: ob.Header = .{
-    .type = .process,
-    .vtable = .{
-        .deinit = &ob_deinit,
-    },
-},
 id: u16,
 state: State = .invalid,
 node: std.DoublyLinkedList.Node = .{},
@@ -56,8 +57,13 @@ pub fn createInitialSystemProcess() !*Process {
     global_lock.lock();
     defer global_lock.unlock();
 
-    const self = try heap.allocator.create(Process);
-    const nullThread = try heap.allocator.create(Thread);
+    const self = try ob.allocate(
+        Process,
+        Process.knownObjectType.getPointer(),
+        @sizeOf(Process),
+        "AntOS Kernel",
+    );
+    const nullThread = try ob.allocate(Thread, Thread.knownObjectType.getPointer(), @sizeOf(Thread), "NULL");
 
     nullThread.* = .{
         .id = .{ .uint = 0 },
@@ -158,12 +164,8 @@ pub fn spawnThread(
     return thread;
 }
 
-pub fn ob_deinit(hdr: *ob.Header) void {
-    std.debug.assert(hdr.type == .process);
-
-    const self: *Process = @fieldParentPtr("header", hdr);
-    if (self.id != 0) @panic("tried to kill initial system process");
-    std.debug.assert(self.threads.number.load(.monotonic) == 0);
-    heap.allocator.destroy(self);
+pub fn ob_deinit(self: *Process) bool {
+    if (self.threads.number.load(.seq_cst) != 0) @panic("process object destroyed before threads terminated");
+    // TODO: Cleanup stuff.
+    return true;
 }
-

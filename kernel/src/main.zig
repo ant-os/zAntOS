@@ -48,6 +48,7 @@ pub const arch = @import("hal/arch/arch.zig");
 pub const kpcb = @import("ke/kpcb.zig");
 pub const ktest = @import("tests/framework.zig");
 pub const symbols = @import("debug/elf_symbols.zig");
+pub const HardwareIo = @import("io/abstracthw.zig");
 
 // zig panic handler and std options
 pub const panic = @import("ke/panic.zig")._zig_panic_impl;
@@ -105,6 +106,7 @@ export fn antkStartupSystem(info: *antboot_external.BootInfo) callconv(arch.cc) 
     heap.init(32) catch unreachable;
     syspte.init() catch unreachable;
     tsc.init() catch unreachable;
+    ob.initObjectTypes() catch @panic("failed to create object types");
     kpcb.current().scheduler.init() catch unreachable;
 
     _ = Process.createInitialSystemProcess() catch |e| std.debug.panic(
