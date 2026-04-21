@@ -4,3 +4,4 @@ build
 *.zig-cache
 kernel/zig-pkg
 output/docs
+target
