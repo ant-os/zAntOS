@@ -27,7 +27,7 @@ pub inline fn getAuxilliaryData(obj: *anyopaque) []u8 {
 
 pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, opt_name: ?[]const u8) !*T {
     const auxiliary_size = if (opt_name) |name| name.len + 1 else 0;
-    const size = @max(@sizeOf(T), if (@"type" != null) @"type".?.size else 0, std.mem.alignForward(usize, size_, 0x10));
+    const size = @max(if (T != anyopaque) @sizeOf(T) else 0, if (@"type" != null) @"type".?.size else 0, std.mem.alignForward(usize, size_, 0x10));
     const allocationSize = @sizeOf(Header) + size + auxiliary_size;
     const allocation = try heap.allocator.alignedAlloc(u8, .@"16", allocationSize);
     @memset(allocation, 0);
@@ -57,7 +57,7 @@ pub inline fn getName(obj: *anyopaque) ?[]const u8 {
     return location[0..getHeader(obj).name_len];
 }
 
-inline fn getHeader(obj: *anyopaque) *Header {
+pub inline fn getHeader(obj: *anyopaque) *Header {
     return @ptrFromInt(@intFromPtr(obj) - @sizeOf(Header));
 }
 
@@ -70,6 +70,10 @@ pub fn referenceObject(obj: *anyopaque, ty: *Type) error{InvalidParameter}!void 
     log.debug("ref(header={any}, ty={any})", .{getHeader(obj), ty});
     if (getHeader(obj).type != ty) return error.InvalidParameter;
     referenceRaw(obj);
+}
+
+pub inline fn checkObjectType(obj: *anyopaque, ty: *Type) bool {
+    return getHeader(obj).type == ty;
 }
 
 pub fn referenceKnownObject(obj: *anyopaque, comptime T: type) error{InvalidParameter}!*T {
@@ -93,12 +97,10 @@ pub fn unreferenceRaw(obj: *anyopaque) void {
         oldValue - 1,
         .seq_cst,
         .monotonic,
-    )) |val| oldValue = val{
+    )) |val| : (oldValue = val) {
         // the object is already being cleaned up.
-        if (val == 0) {
-            return;
-        }};
-
+        if (val == 0) return;
+    }
     if (oldValue == 1) {
         const ty = if (header.type == null) {
             log.warn("object with no type leaked, pointer=0x{x}", .{@intFromPtr(obj)});
@@ -108,7 +110,7 @@ pub fn unreferenceRaw(obj: *anyopaque) void {
         // set the `delete_in_progress` flag
         if (header.flags.set(.delete_in_progress, .acquire) == true) return;
 
-        if (ty.vtable.deinit) |deinit_cb| deinit_cb(obj);
+        _ = if (ty.vtable.deinit) |deinit_cb| deinit_cb(obj);
 
         // the object was rescued, return instead of deleting.
         if (header.ptr_count.load(.seq_cst) > 0) {
@@ -123,10 +125,6 @@ pub fn unreferenceRaw(obj: *anyopaque) void {
 }
 
 pub export var ObObjectType: ?*Type = null;
-pub export var ObThreadType: ?*Type = null;
-pub export var ObProcessType: ?*Type = null;
-pub export var ObDeviceType: ?*Type = null;
-pub export var ObDriverType: ?*Type = null;
 
 pub fn createType(name: []const u8, size: usize, vtable: BaseVTable) !*Type {
     const ty = try allocate(Type, ObObjectType, @sizeOf(Type), name);

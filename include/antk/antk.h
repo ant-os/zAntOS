@@ -25,6 +25,13 @@ typedef uint64_t ANTSTATUS;
 #define ANTSTATUS_NO_DRIVER 0x8000000000003
 #define ANTSTATUS_OUT_OF_MEMORY 0x8000000000004
 
+typedef enum _PROCESSOR_MODE {
+    UserMode = 1,
+    KernelMode = 0,
+} PROCESSOR_MODE;
+
+typedef uint64_t ACCESS_MASK;
+
 
 /// @brief Entrypoint of a AntOS Kernel Mode Driver
 /// @param DriverObect The pointer to the driver object

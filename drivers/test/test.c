@@ -1,12 +1,15 @@
 #include <stdint.h>
 #include <stdarg.h>
-#include "../../include/antk.h"
-#include "../../include/io.h"
+#include "antk/antk.h"
+#include "antk/io.h"
+#include "antk/ob.h"
 
 ANTKAPI ANTSTATUS HandleWrite(PIRP Irp, IRP_PARAMS_WRITE *Parameters, void *Context);
 
 ANTKAPI ANTSTATUS AntkDriverEntry(PKO_DRIVER DriverObect, void *unused) {
     AntkDebugPrint("test");
+
+    ObReferenceObject(DriverObect);
 
     IoInstallHandler(DriverObect, IRP_MJ_WRITE, HandleWrite);
 
