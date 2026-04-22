@@ -8,3 +8,4 @@ antos-kernel-sys = { path = "../../crates/antos-kernel-sys" }
 
 [lib]
 crate-type = ["staticlib"]
+

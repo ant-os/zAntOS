@@ -7,8 +7,7 @@ rustflags = [
     "-C", "link-arg=-nostdlib",
     "-C", "link-arg=-entry AntkDriverEntry",
     "-C", "code-model=large",
-    "-C", "relocation-model=pic",
-        "-C", "link-arg=-fno-PIE",
+    "-C", "relocation-model=static",
     "-C", "panic=abort",
 ]
 

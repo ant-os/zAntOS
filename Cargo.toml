@@ -1,3 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/antos-kernel-sys", "drivers/rust-example"]
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"

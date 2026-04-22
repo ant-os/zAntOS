@@ -235,16 +235,6 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
     const rawSectionHeaders: [*]elf.Shdr = @ptrCast(@alignCast(imageData[elfHdr.shoff..]));
     const sections = rawSectionHeaders[0..elfHdr.shnum];
 
-    const relocHeader = symbols.section_by_name(&elfHdr, imageData, ".rela.text");
-
-    if (relocHeader == null or relocHeader.?.sh_type != elf.SHT_RELA or relocHeader.?.sh_entsize != @sizeOf(elf.Rela)) return error.UnsupportedRelocationData;
-
-    log.debug(".text.rela header: {any}", .{relocHeader});
-
-    const numRelocations = relocHeader.?.sh_size / @sizeOf(elf.Rela);
-    const rawRelocations: [*]elf.Rela = @ptrCast(@alignCast(imageData[relocHeader.?.sh_offset..]));
-    const relocs = rawRelocations[0..numRelocations];
-
     var shdrIter = elfHdr.iterateSectionHeadersBuffer(imageData);
 
     while (try shdrIter.next()) |shdr| {
@@ -290,53 +280,81 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
         }
     }
 
-    for (relocs) |rela| {
-        const symbol = &driverSymbols[rela.r_sym()];
-        const rtype: elf.R_X86_64 = @enumFromInt(rela.r_type());
-        const targetSection = sections[relocHeader.?.sh_info];
+    var relocsIter = elfHdr.iterateSectionHeadersBuffer(imageData);
 
-        const symbolName = (if (symbol.st_type() == elf.STT_SECTION) symbols.sectionNameZ(
-            &elfHdr,
-            imageData,
-            sections[symbol.st_shndx].sh_name,
-        ) else symbols.strtabGetZ(
-            imageData,
-            strtabHeader,
-            symbol.st_name,
-        )) orelse "<noname>";
-        log.debug(
-            "relocation of type {any} for symbol {s}+0x{x} with patchsite of 0x{x}",
-            .{
-                rtype,
-                symbolName,
-                rela.r_addend,
-                targetSection.sh_addr + rela.r_offset,
-            },
-        );
+    while (try relocsIter.next()) |relocHeader| {
+        if (relocHeader.sh_type != elf.SHT_RELA) continue;
 
-        const resolvedSymbol = switch (symbol.st_shndx) {
-            elf.SHN_UNDEF => if (antk.AntkResolveKernelSymbol(
-                symbolName,
-            )) |func| @intFromPtr(func) else {
-                log.err("undefined symbol {s}", .{symbolName});
-                return error.UndefinedSymbol;
-            },
-            elf.SHN_ABS => symbol.st_value,
-            else => |idx| blk: {
-                const section = &sections[idx];
-                break :blk section.sh_addr + symbol.st_value;
-            },
-        };
+        log.info("rela section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}", .{
+            symbols.section_name(
+                &elfHdr,
+                imageData,
+                relocHeader.sh_name,
+            ) orelse "<no name>",
+            relocHeader.sh_offset,
+            relocHeader.sh_size,
+            relocHeader.sh_flags,
+            relocHeader.sh_type,
+        });
+    
 
-        if (rtype != .@"64") {
-            log.warn("unsupported relocation", .{});
-            continue;
+        const numRelocations = relocHeader.sh_size / @sizeOf(elf.Rela);
+        const rawRelocations: [*]elf.Rela = @ptrCast(@alignCast(imageData[relocHeader.sh_offset..]));
+        const relocs = rawRelocations[0..numRelocations];
+
+        for (relocs) |rela| {
+            const symbol = &driverSymbols[rela.r_sym()];
+            const rtype: elf.R_X86_64 = @enumFromInt(rela.r_type());
+            const targetSection = sections[relocHeader.sh_info];
+
+            log.debug("{any}, sym: {any}", .{rela, symbol});
+
+            const symbolName = (if (symbol.st_type() == elf.STT_SECTION) symbols.sectionNameZ(
+                &elfHdr,
+                imageData,
+                sections[symbol.st_shndx].sh_name,
+            ) else symbols.strtabGetZ(
+                imageData,
+                strtabHeader,
+                symbol.st_name,
+            )) orelse "<noname>";
+            log.debug(
+                "relocation of type {any} for symbol {s}+0x{x} with patchsite of 0x{x}",
+                .{
+                    rtype,
+                    symbolName,
+                    rela.r_addend,
+                    targetSection.sh_addr + rela.r_offset,
+                },
+            );
+
+            const resolvedSymbol = switch (symbol.st_shndx) {
+                elf.SHN_UNDEF => if (antk.AntkResolveKernelSymbol(
+                    symbolName,
+                )) |func| @intFromPtr(func) else {
+                    log.err("undefined symbol {s}", .{symbolName});
+                    return error.UndefinedSymbol;
+                },
+                elf.SHN_ABS => symbol.st_value,
+                else => |idx| blk: {
+                    const section = &sections[idx];
+                    break :blk section.sh_addr + symbol.st_value;
+                },
+            };
+            log.debug("patching with 0x{x}", .{resolvedSymbol + @as(usize, @bitCast(rela.r_addend))});
+
+            switch (rtype) {
+                .@"64" => {
+                    const patchsite: *align(1) volatile u64 = @ptrFromInt(targetSection.sh_addr + rela.r_offset);
+                    patchsite.* = resolvedSymbol + @as(u64, @bitCast(rela.r_addend));
+                },
+                .@"32" => {
+                    const patchsite: *align(1) volatile u32 = @ptrFromInt(targetSection.sh_addr + rela.r_offset);
+                    patchsite.* = @truncate(resolvedSymbol + @as(usize, @bitCast(rela.r_addend)));
+                },
+                else => std.debug.panic("unsupported relocation type {any}", .{rtype}),
+            }
         }
-
-        log.debug("patching with 0x{x}", .{resolvedSymbol + @as(usize, @bitCast(rela.r_addend))});
-
-        const patchsite: *align(1) volatile usize = @ptrFromInt(targetSection.sh_addr + rela.r_offset);
-        patchsite.* = resolvedSymbol + @as(usize, @bitCast(rela.r_addend));
     }
 
     var entry: ?*const @TypeOf(antk.antkDriverEntry) = null;
@@ -349,7 +367,7 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
         ) orelse continue;
 
         if (std.mem.eql(u8, name, "AntkDriverEntry")) {
-            log.debug("entry found:{any}", .{sym});
+            log.info("entry found:{any}", .{sym});
             entry = @ptrFromInt(switch (sym.st_shndx) {
                 elf.SHN_UNDEF => return error.UndefinedEntrypoint,
                 elf.SHN_ABS => sym.st_value,
@@ -366,7 +384,7 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
     );
 
     log.info("AntkDriverEntry() returned {d}", .{antk.antkDriverEntry(driver, null)});
-    log.debug("driver object: {any}", .{driver});
+    log.info("driver object: {any}", .{driver});
 
     const testdev = try Device.create("test", null);
     testdev.driver = driver;
