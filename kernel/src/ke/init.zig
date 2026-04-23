@@ -9,7 +9,7 @@ const heap = @import("../mm/heap.zig");
 const syspte = @import("../mm/syspte.zig");
 const mm = @import("../mm/../mm/mm.zig");
 const ob = @import("../ob/object.zig");
-const vfs = @import("../ob/vfs.zig");
+const vfs = @import("../ob/vode.zig");
 const antboot_external = @import("bootloader");
 const antboot = @import("../utils/antboot.zig");
 const zuacpi_bind = @import("../hal/acpi/zuacpi.zig");
@@ -114,12 +114,22 @@ pub noinline fn init() !void {
 
     try vfs.init();
 
-    try vfs.attach("//Devices/GLOBALROOT/TestDevice", @ptrCast(mydev));
-
-    const vfsdev: *Device = try ob.referenceKnownObject(
-        try vfs.resolve("//Devices/GLOBALROOT/TestDevice") orelse @panic("no object bound to vfs path"),
-        Device,
+    const vode = try ob.createVode(
+        null,
+        "//TestABC",
+        true,
+        .{ .object = @ptrCast(mydev) },
     );
+
+    klog.info("vode: {any}", .{vode});
+
+    const vfsdev: *Device = @ptrCast(@alignCast(try ob.getObjectPointerByName(
+        "//TestABC",
+        0,
+        true,
+        null,
+        0,
+    )));
 
     klog.info("result translated to device object: {any}", .{vfsdev});
 
@@ -296,7 +306,6 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
             relocHeader.sh_flags,
             relocHeader.sh_type,
         });
-    
 
         const numRelocations = relocHeader.sh_size / @sizeOf(elf.Rela);
         const rawRelocations: [*]elf.Rela = @ptrCast(@alignCast(imageData[relocHeader.sh_offset..]));
@@ -307,7 +316,7 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
             const rtype: elf.R_X86_64 = @enumFromInt(rela.r_type());
             const targetSection = sections[relocHeader.sh_info];
 
-            log.debug("{any}, sym: {any}", .{rela, symbol});
+            log.debug("{any}, sym: {any}", .{ rela, symbol });
 
             const symbolName = (if (symbol.st_type() == elf.STT_SECTION) symbols.sectionNameZ(
                 &elfHdr,

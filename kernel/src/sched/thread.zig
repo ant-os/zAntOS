@@ -97,10 +97,18 @@ pub fn internalCreateNoAttach(
     stack: []u8,
     initial_context: ?Context,
 ) !*Thread {
-
     try ob.referenceObject(@ptrCast(parent), Process.knownObjectType.getPointer());
 
-    const self = try ob.allocate(Thread, knownObjectType.getPointer(), @sizeOf(Thread), null);
+    const self = try ob.createObject(
+        Thread,
+        knownObjectType.getPointer(),
+        null,
+        true,
+        null,
+        null, 
+        null,
+        null,
+    );
     self.* = .{
         .id = .{
             .split = .{

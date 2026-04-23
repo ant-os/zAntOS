@@ -1,0 +1,104 @@
+[debug] pframe_alloc: memory map entry 95: .boot_services_code 0x3ecd1000 (25 pages)
+[debug] pframe_alloc: memory map entry 96: .boot_services_data 0x3ecea000 (3 pages)
+[debug] pframe_alloc: memory map entry 97: .boot_services_code 0x3eced000 (3 pages)
+[debug] pframe_alloc: memory map entry 98: .boot_services_data 0x3ecf0000 (1 pages)
+[debug] pframe_alloc: memory map entry 99: .boot_services_code 0x3ecf1000 (6 pages)
+[debug] pframe_alloc: memory map entry 100: .boot_services_data 0x3ecf7000 (2 pages)
+[debug] pframe_alloc: memory map entry 101: .boot_services_code 0x3ecf9000 (1 pages)
+[debug] pframe_alloc: memory map entry 102: .boot_services_data 0x3ecfa000 (1 pages)
+[debug] pframe_alloc: memory map entry 103: .boot_services_code 0x3ecfb000 (4 pages)
+[debug] pframe_alloc: memory map entry 104: .boot_services_data 0x3ecff000 (2 pages)
+[debug] pframe_alloc: memory map entry 105: .boot_services_code 0x3ed01000 (22 pages)
+[debug] pframe_alloc: memory map entry 106: .boot_services_data 0x3ed17000 (1 pages)
+[debug] pframe_alloc: memory map entry 107: .boot_services_code 0x3ed18000 (2 pages)
+[debug] pframe_alloc: memory map entry 108: .boot_services_data 0x3ed1a000 (19 pages)
+[debug] pframe_alloc: memory map entry 109: .boot_services_code 0x3ed2d000 (2 pages)
+[debug] pframe_alloc: memory map entry 110: .boot_services_data 0x3ed2f000 (1024 pages)
+[debug] pframe_alloc: memory map entry 111: .boot_services_code 0x3f12f000 (8 pages)
+[debug] pframe_alloc: memory map entry 112: .boot_services_data 0x3f137000 (6 pages)
+[debug] pframe_alloc: memory map entry 113: .boot_services_code 0x3f13d000 (10 pages)
+[debug] pframe_alloc: memory map entry 114: .boot_services_data 0x3f147000 (1 pages)
+[debug] pframe_alloc: memory map entry 115: .boot_services_code 0x3f148000 (5 pages)
+[debug] pframe_alloc: memory map entry 116: .boot_services_data 0x3f14d000 (928 pages)
+[debug] pframe_alloc: memory map entry 117: .runtime_services_data 0x3f4ed000 (256 pages)
+[debug] pframe_alloc: memory map entry 118: .runtime_services_code 0x3f5ed000 (256 pages)
+[debug] pframe_alloc: memory map entry 119: .reserved_memory_type 0x3f6ed000 (128 pages)
+[debug] pframe_alloc: memory map entry 120: .acpi_reclaim_memory 0x3f76d000 (18 pages)
+[debug] pframe_alloc: memory map entry 121: .acpi_memory_nvs 0x3f77f000 (128 pages)
+[debug] pframe_alloc: memory map entry 122: .boot_services_data 0x3f7ff000 (1537 pages)
+[debug] pframe_alloc: memory map entry 123: .conventional_memory 0x3fe00000 (119 pages)
+[debug] pframe_alloc: initalizing free root page frame at PFN 261632, order 6, tagged normal
+[debug] pframe_alloc: initalizing free root page frame at PFN 261696, order 5, tagged normal
+[debug] pframe_alloc: initalizing free root page frame at PFN 261728, order 4, tagged normal
+[debug] pframe_alloc: initalizing free root page frame at PFN 261744, order 2, tagged normal
+[debug] pframe_alloc: initalizing free root page frame at PFN 261748, order 1, tagged normal
+[debug] pframe_alloc: initalizing free root page frame at PFN 261750, order 0, tagged normal
+[debug] pframe_alloc: memory map entry 124: .boot_services_data 0x3fe77000 (32 pages)
+[debug] pframe_alloc: memory map entry 125: .boot_services_code 0x3fe97000 (51 pages)
+[debug] pframe_alloc: memory map entry 126: .boot_services_data 0x3feca000 (17 pages)
+[debug] pframe_alloc: memory map entry 127: .boot_services_code 0x3fedb000 (25 pages)
+[debug] pframe_alloc: memory map entry 128: .runtime_services_data 0x3fef4000 (132 pages)
+[debug] pframe_alloc: memory map entry 129: .acpi_memory_nvs 0x3ff78000 (136 pages)
+[debug] pframe_alloc: memory map entry 130: .reserved_memory_type 0xe0000000 (65536 pages)
+[debug] pframe_alloc: memory map entry 131: .reserved_memory_type 0xfd00000000 (3145728 pages)
+[info] paging: Initializing kernel paging...
+[info] paging: Recursive Page Table mapped to ffffff0000000000...
+[info] kheap: Initalizing kernel heap with 32 preallocated page(s).
+[debug] kheap: Segment Header is 32 bytes.
+[debug] paging: breakpoint for first page table allocation
+
+CPU exception: breakpoint
+rax=               0 rbx=               0 rcx=              3c rdx= 105ffff801f0000
+rsi=ffffffff801f4810 rdi=ffffffffffff7eb8 rbp=ffffffffffff7620 rsp=ffffffffffff75b0
+r08=               1 r09=               1 r10=              20 r11=         1780020
+r12=               0 r13=               0 r14=               0 r15=               0
+rip=ffffffff800d08d4 flg=              82 irql=        passive cpl=               0
+cr0=        80010033 cr2=               0 cr3=        3dd2d000 cr4=             668
+Stacktrace: 
+format: #<index> <module> <address> <symbol>+<offset>
+#0 kernel 0xffffffff800d08d4 mm.paging.__createNewPageTable+0x44
+#1 kernel 0xffffffff800d0f5e mm.paging.allocatePageTableForMapping+0x5be
+#2 kernel 0xffffffff800d16c6 mm.paging.mapPage+0x76
+#3 kernel 0xffffffff800d19d5 mm.paging.mapRegion+0x115
+#4 kernel 0xffffffff800d1c13 mm.vmm.internalMapFrame+0x213
+#5 kernel 0xffffffff800d2016 mm.vmm.Area.grow+0x316
+#6 kernel 0xffffffff800d23f3 mm.heap.grow+0x23
+#7 kernel 0xffffffff800d2587 mm.heap.init+0x37
+#8 kernel 0xffffffff800d998a antkStartupSystem+0x25a
+#9 kernel 0x74325f656e747279 __bootldr_canary+0x0
+
+==== KERNEL PANIC ====
+
+Status: <zig panic>
+Message: failed to create object types: InvalidPath
+Panic Stacktrace:
+format: #<index> <module> <address> <symbol>+<offset>
+#0 kernel 0xffffffff800d9ab1 antkStartupSystem+0x381
+#1 kernel 0x74325f656e747279 __bootldr_canary+0x0
+Error Stacktrace:
+format: #<index> <module> <address> <symbol>+<offset>
+#0 kernel 0xffffffff800d4fd5 ob.vode.lookupAbsoluteNoLock+0x2c5
+#1 kernel 0xffffffff800d4ced ob.vode.lookupAbsolute+0x11d
+#2 kernel 0xffffffff800d6324 ob.object.createVode+0x464
+#3 kernel 0xffffffff800d6ec7 ob.object.createObject__anon_12091+0x2c7
+#4 kernel 0xffffffff800d703b ob.object.createType+0xeb
+#5 kernel 0xffffffff800d7325 ob.object.init+0x245
+
+End of panic, halting cpu.
+
+CPU exception: breakpoint
+rax=               0 rbx=               0 rcx=               2 rdx=               0
+rsi=ffffffff801f4838 rdi=ffffffffffff7eb8 rbp=ffffffffffff6bd0 rsp=ffffffffffff6880
+r08=               1 r09=               1 r10=              20 r11=ffffffe000021040
+r12=               0 r13=               0 r14=               0 r15=               0
+rip=ffffffff800ba481 flg=              46 irql=        passive cpl=               0
+cr0=        80010033 cr2=               0 cr3=        3dd2d000 cr4=             668
+Stacktrace: 
+format: #<index> <module> <address> <symbol>+<offset>
+#0 kernel 0xffffffff800ba481 ke.panic.handle_zig_panic+0xd71
+#1 kernel 0xffffffff800b655a ke.panic._zig_panic_impl+0x5a
+#2 kernel 0xffffffff800b2c0f builtin.panic__struct_2038.panic+0x2f
+#3 kernel 0xffffffff800e073a debug.panicExtra__anon_64363+0x11a
+#4 kernel 0xffffffff800d9fe0 debug.panic__anon_12184+0x20
+#5 kernel 0xffffffff800d9ab1 antkStartupSystem+0x381
+#6 kernel 0x74325f656e747279 __bootldr_canary+0x0

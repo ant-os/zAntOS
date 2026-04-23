@@ -57,13 +57,26 @@ pub fn createInitialSystemProcess() !*Process {
     global_lock.lock();
     defer global_lock.unlock();
 
-    const self = try ob.allocate(
+    const self = try ob.createObject(
         Process,
         Process.knownObjectType.getPointer(),
-        @sizeOf(Process),
-        "AntOS Kernel",
+        null,
+        true,
+        null,
+        "//??/InitialSystemProcess",
+        0x1,
+        null,
     );
-    const nullThread = try ob.allocate(Thread, Thread.knownObjectType.getPointer(), @sizeOf(Thread), "NULL");
+    const nullThread = try ob.createObject(
+        Thread,
+        Thread.knownObjectType.getPointer(),
+        null,
+        true,
+        null,
+        null,
+        0x1,
+        null,
+    );
 
     nullThread.* = .{
         .id = .{ .uint = 0 },

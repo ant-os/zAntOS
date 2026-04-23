@@ -5,6 +5,10 @@ const std = @import("std");
 const arch = @import("../hal/arch/arch.zig");
 const heap = @import("kmod").heap;
 const log = std.log.scoped(.object_manager);
+const antk_c = @import("../antk/antk.zig").c;
+const antk = @import("../antk/antk.zig");
+
+pub const Vode = @import("vode.zig");
 
 pub const BaseVTable = extern struct {
     deinit: ?*const fn (*anyopaque) callconv(arch.cc) bool = null,
@@ -25,15 +29,13 @@ pub inline fn getAuxilliaryData(obj: *anyopaque) []u8 {
     return rawPointer[0..getHeader(obj).auxilliary_size];
 }
 
-pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, opt_name: ?[]const u8) !*T {
-    const auxiliary_size = if (opt_name) |name| name.len + 1 else 0;
+pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, auxiliary_size: usize, attributes: ?u32) !*T {
     const size = @max(if (T != anyopaque) @sizeOf(T) else 0, if (@"type" != null) @"type".?.size else 0, std.mem.alignForward(usize, size_, 0x10));
     const allocationSize = @sizeOf(Header) + size + auxiliary_size;
     const allocation = try heap.allocator.alignedAlloc(u8, .@"16", allocationSize);
     @memset(allocation, 0);
     const header: *Header = @ptrCast(allocation.ptr);
     const body: *T = @ptrFromInt(@intFromPtr(allocation.ptr) + @sizeOf(Header));
-    const auxiliaryData: [*]u8 = @ptrFromInt(@intFromPtr(allocation.ptr) + @sizeOf(Header) + size);
 
     if (@"type" != null) referenceRaw(@ptrCast(@"type"));
 
@@ -44,10 +46,9 @@ pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, opt_name: ?[]co
         .ptr_count = .init(1),
         .handle_count = .init(0),
         .flags = .{ .typed = .{} },
-        .name_len = if (opt_name) |name| name.len else 0,
+        .name_len = 0,
+        .attributes = attributes orelse 0,
     };
-
-    if (opt_name) |name| @memcpy(auxiliaryData[0..name.len], name);
 
     return body;
 }
@@ -67,7 +68,7 @@ pub fn referenceRaw(obj: *anyopaque) void {
 }
 
 pub fn referenceObject(obj: *anyopaque, ty: *Type) error{InvalidParameter}!void {
-    log.debug("ref(header={any}, ty={any})", .{getHeader(obj), ty});
+    log.debug("ref(header={any}, ty={any})", .{ getHeader(obj), ty });
     if (getHeader(obj).type != ty) return error.InvalidParameter;
     referenceRaw(obj);
 }
@@ -126,8 +127,51 @@ pub fn unreferenceRaw(obj: *anyopaque) void {
 
 pub export var ObObjectType: ?*Type = null;
 
-pub fn createType(name: []const u8, size: usize, vtable: BaseVTable) !*Type {
-    const ty = try allocate(Type, ObObjectType, @sizeOf(Type), name);
+pub fn createVode(
+    directory: ?*Vode,
+    path: []const u8,
+    kernel_mode: bool,
+    modedata: Vode.Modedata,
+) !*Vode {
+    _ = kernel_mode;
+
+    if (directory != null and std.mem.endsWith(u8, path, "/"))
+        return error.InvalidPath;
+
+    const startOfBasename = std.mem.lastIndexOfScalar(
+        u8,
+        path,
+        '/',
+    ) orelse 0;
+
+    const dirname = path[0..startOfBasename];
+    const realname = path[startOfBasename..];
+
+    var remainingString: []const u8 = &.{};
+    const dir = if (directory) |dir| try dir.lookupRelative(
+        path,
+        antk_c.OB_VODE_OPEN,
+        &remainingString,
+    ) else try Vode.lookupAbsolute(
+        dirname,
+        antk_c.OB_VODE_OPEN,
+        &remainingString,
+    );
+
+    if (remainingString.len > 0) return error.NotFound;
+
+    return try dir.insert(realname, modedata);
+}
+
+pub fn createUnnamedType(size: usize, vtable: BaseVTable) !*Type {
+    const ty = try allocate(
+        Type,
+        ObObjectType,
+        @sizeOf(Type),
+        0,
+        null,
+    );
+
     ty.* = .{
         .instance_count = .init(0),
         .size = size,
@@ -136,16 +180,118 @@ pub fn createType(name: []const u8, size: usize, vtable: BaseVTable) !*Type {
     return ty;
 }
 
-pub fn initObjectTypes() !void {
-    ObObjectType = try createType("Object Type", @sizeOf(Type), .{});
+pub fn createObject(
+    comptime T: type,
+    type_: *Type,
+    size_override: ?usize,
+    kernel: bool,
+    directory: ?*Vode,
+    name: ?[]const u8,
+    attributes: ?u32,
+    out_vode: ?**Vode,
+) !*T {
+    if (T == anyopaque and size_override == null) return error.InvalidParameter;
+    if (name != null and out_vode != null) return error.InvalidParameter;
+
+    const object = try allocate(
+        T,
+        type_,
+        if (T != anyopaque and size_override == null) @sizeOf(T) else size_override.?,
+        0,
+        attributes,
+    );
+
+    errdefer unreferenceObject(T, object);
+
+    if (name != null) {
+        const vode = try createVode(
+            directory,
+            name.?,
+            kernel,
+            .{ .object = @ptrCast(object) },
+        );
+
+        if (out_vode) |loc| loc.* = vode;
+    }
+
+    return object;
+}
+
+pub var typeDirectory: ?*Vode = null;
+
+inline fn panicUninit() void {
+    @panic("system not initialized");
+}
+
+pub fn createType(name: []const u8, size: usize, vtable: BaseVTable) !*Type {
+    const ty = try createObject(
+        Type,
+        ObObjectType orelse panicUninit(),
+        null,
+        true,
+        typeDirectory,
+        name,
+        null,
+        null,
+    );
+
+    ty.* = .{
+        .instance_count = .init(0),
+        .size = size,
+        .vtable = vtable,
+    };
+    return ty;
+}
+
+pub fn init() !void {
+    ObObjectType = try createUnnamedType(@sizeOf(Type), .{});
     getHeader(@ptrCast(ObObjectType)).type = ObObjectType;
+
+    Vode.knownObjectType.private = try createUnnamedType(
+        @sizeOf(Vode),
+        Vode.knownObjectType.base_vtable,
+    );
+
+    try Vode.init();
 
     try registerKnownType(.thread, @import("kmod").Thread);
     try registerKnownType(.process, @import("kmod").Process);
     try registerKnownType(.device, @import("kmod").Device);
     try registerKnownType(.driver, @import("kmod").Driver);
     try registerKnownType(.hwio, @import("kmod").HardwareIo);
+}
 
+pub fn getObjectPointerByName(
+    path_: []const u8,
+    desiredAccess: antk_c.ACCESS_MASK,
+    kernelMode: bool,
+    type_: ?*Type,
+    flags: Vode.Flags,
+) !*anyopaque {
+    _ = desiredAccess;
+
+    var remaining_path: []const u8 = path_;
+
+    const node = try Vode.lookupAbsolute(path_, flags, &remaining_path);
+
+    if ((flags & antk_c.OB_VODE_OPEN) != 0) {
+        if (remaining_path.len == 0) return error.InvalidParameter;
+        return @ptrCast(node);
+    }
+
+    if (!kernelMode) @panic("usermode access checks are not yet implemented");
+
+    // TODO: Check Access rights.
+
+    if (node.mode != .object) return error.InvalidPath;
+    if (node.mode.object == null) return error.NoAssociatedObject;
+
+    if (type_) |ty| try referenceObject(
+        node.mode.object.?,
+        ty,
+    ) else referenceRaw(node.mode.object.?);
+
+    return node.mode.object.?;
 }
 
 pub const KnownTypeInstance = struct {
@@ -196,6 +342,8 @@ pub const Header = extern struct {
     ptr_count: std.atomic.Value(u64),
     handle_count: std.atomic.Value(u64),
     name_len: usize,
+    vode: std.atomic.Value(?*Vode) = .init(null),
+    attributes: u32,
 
     pub fn allocation(self: *Header) []u8 {
         const base: [*]u8 = @ptrCast(self);

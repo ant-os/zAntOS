@@ -62,7 +62,16 @@ pub fn write(self: *HardwareIo, comptime T: type, offset: usize, value: T) !void
 }
 
 pub fn fromInternal(dev: InternalDevice) !*HardwareIo {
-    const self = try ob.allocate(HardwareIo, knownObjectType.getPointer(), @sizeOf(HardwareIo), null);
+    const self = try ob.createObject(
+        HardwareIo,
+        knownObjectType.getPointer(),
+        null,
+        true,
+        null,
+        null,
+        null,
+        null,
+    );
     self.* = .{
         .device = dev,
     };

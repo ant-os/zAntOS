@@ -24,7 +24,16 @@ bus: ?*Device,
 node: std.DoublyLinkedList.Node = .{},
 
 pub fn create(name: []const u8, bus: ?*Device) !*Device {
-    const self = try ob.allocate(Device, knownObjectType.getPointer(), @sizeOf(Device), null);
+    const self = try ob.createObject(
+        Device,
+        knownObjectType.getPointer(),
+        null,
+        true,
+        null,
+        null,
+        null,
+        null,
+    );
     self.* = .{
         .name = name,
         .bus = bus,

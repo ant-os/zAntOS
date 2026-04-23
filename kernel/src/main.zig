@@ -1,7 +1,7 @@
 //! AntOS Operating System Kernel Main Sourcefile
 
 // self-import, std, builtins, default logger.
-const antos_kernel = @import("kmod");  
+const antos_kernel = @import("kmod");
 const std = @import("std");
 const builtin = @import("builtin");
 const klog = std.log.scoped(.kernel);
@@ -20,7 +20,7 @@ pub const heap = @import("mm/heap.zig");
 pub const syspte = @import("mm/syspte.zig");
 pub const mm = @import("mm/mm.zig");
 pub const ob = @import("ob/object.zig");
-pub const vfs = @import("ob/vfs.zig");
+pub const Vode = @import("ob/vode.zig");
 pub const antboot_external = @import("bootloader");
 pub const antboot = @import("utils/antboot.zig");
 pub const zuacpi_bind = @import("hal/acpi/zuacpi.zig");
@@ -106,7 +106,8 @@ export fn antkStartupSystem(info: *antboot_external.BootInfo) callconv(arch.cc) 
     heap.init(32) catch unreachable;
     syspte.init() catch unreachable;
     tsc.init() catch unreachable;
-    ob.initObjectTypes() catch @panic("failed to create object types");
+
+    ob.init() catch |e| std.debug.panic("failed to create object types: {s}", .{@errorName(e)});
     kpcb.current().scheduler.init() catch unreachable;
 
     _ = Process.createInitialSystemProcess() catch |e| std.debug.panic(

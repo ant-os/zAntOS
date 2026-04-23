@@ -183,15 +183,17 @@ pub export fn ObCreateObject(
 ) callconv(cc) ANTSTATUS {
     if (c_OutObject == null) return .invalid_parameter;
 
-    const type_: *ob.Type = validateObjectType(c_Type) orelse return .invalid_parameter;
+    _ = .{c_Type, c_Name, c_Size};
 
-    const name = if (c_Name) |str| str[0..std.mem.len(str)] else null;
+    // const type_: *ob.Type = validateObjectType(c_Type) orelse return .invalid_parameter;
 
-    const object = ob.allocate(anyopaque, type_, c_Size, name) catch |err| switch (err) {
-        error.OutOfMemory => return .out_of_memory
-    };
+    // const name = if (c_Name) |str| str[0..std.mem.len(str)] else null;
 
-    c_OutObject.?.* = object;
+    // // const object = ob.allocate(anyopaque, type_, c_Size, name) catch |err| switch (err) {
+    // //     error.OutOfMemory => return .out_of_memory
+    // // };
+
+    // // c_OutObject.?.* = object;
 
     return .success;
 }

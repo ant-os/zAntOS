@@ -17,7 +17,7 @@ owner: std.atomic.Value(u32) = .init(0),
 
 pub fn lock(self: *Mutex) !void {
     //self.awaitable.lock.lockAt(.sync);
-    const thread = Scheduler.currentThread().?;
+    const thread = Scheduler.currentThread() orelse return;
     if (try self.poll(thread)) return;
     thread.setState(.waiting);
     defer thread.setState(.running);
