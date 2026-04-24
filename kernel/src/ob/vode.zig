@@ -6,7 +6,7 @@ const ob = @import("object.zig");
 const Mutex = @import("../ke/sync/Mutex.zig");
 const heap = @import("../mm/heap.zig");
 
-pub const Flags = c_int;
+pub const Flags = u32;
 
 const Vode = @This();
 
@@ -22,7 +22,7 @@ pub const Modedata = union(enum) {
 /// Weak reference to the parent of the current node. If root node or out-of-tree, this will be null.
 parent: ?*Vode = null,
 name: [:0]const u8,
-children: ?std.StringArrayHashMapUnmanaged(*Vode) = .empty,
+children: ?std.StringHashMapUnmanaged(*Vode) = .empty,
 mode: Modedata = .container,
 
 var global_lock: ?*Mutex = null;
@@ -58,18 +58,29 @@ pub fn insert(
     name_: []const u8,
     mode: Modedata,
 ) !*Vode {
+    if (name_.len == 0 or std.mem.eql(u8, ".", name_)) return error.InvalidParameter;
+
     try global_lock.?.lock();
     defer global_lock.?.unlock();
 
     const children = if (self.children != null) &self.children.? else return error.InvalidParameter;
 
-    const child = try ob.allocate(Vode, knownObjectType.getPointer(), @sizeOf(Vode), name_.len + 1, null);
-    defer ob.unreferenceObject(Vode, child);
+    const child = try ob.allocateFreestanding(
+        Vode,
+        knownObjectType.getPointer(),
+        @sizeOf(Vode),
+        name_.len + 1,
+        null,
+    );
+
+    errdefer ob.unreferenceObject(Vode, child);
 
     const capturedName = ob.getAuxilliaryData(@ptrCast(child));
 
+    @memcpy(capturedName.ptr, name_);
+
     child.* = .{
-        .name = capturedName[0.. :0],
+        .name = capturedName[0..(capturedName.len - 1) :0],
         .mode = mode,
         .children = .empty,
         .parent = self,
@@ -77,8 +88,14 @@ pub fn insert(
 
     if (children.get(name_) != null) return error.AlreadyExists;
 
-    try children.put(heap.allocator, capturedName, child);
-    errdefer _ = children.swapRemove(capturedName);
+    log.debug("inserted {s} into directory", .{capturedName});
+
+    try children.put(
+        heap.allocator,
+        capturedName[0..(capturedName.len - 1)],
+        child,
+    );
+    errdefer _ = children.remove(capturedName);
 
     switch (mode) {
         .object => |obj| blk: {
@@ -92,11 +109,10 @@ pub fn insert(
                 .seq_cst,
             ) != null) return error.AlreadyBound;
         },
-        else => {}
+        else => {},
     }
 
-
-    // inc the refcount.
+    // the refrence that is returned.
     ob.referenceRaw(@ptrCast(child));
 
     return child;
@@ -116,7 +132,7 @@ pub fn init() !void {
         knownObjectType.getPointer(),
         null,
         true,
-        null, 
+        null,
         null,
         null,
         null,
@@ -141,6 +157,8 @@ pub fn lookupRelative(
     flags: Flags,
     remaining_path: *[]const u8,
 ) !*Vode {
+    if (path.len == 0 or (path.len == 1 and path[0] == '.')) return self;
+
     try global_lock.?.lock();
     defer global_lock.?.unlock();
 
@@ -160,8 +178,11 @@ pub fn lookupRelativeNoLock(
     path: []const u8,
     flags: Flags,
     remaining_path: *[]const u8,
-) !*Vode {
-    assert((flags & antk_c.OB_VODE_OPEN) != 0);
+) error{ InvalidPath, NotFound, InvalidParameter }!*Vode {
+    if ((flags & antk_c.OB_VODE_OPEN) == 0)
+        log.warn("vfs lookup without OB_VODE_OPEN flag set!", .{});
+
+    log.debug("looking up relative path: {s}", .{path});
 
     if (path.len == 0) return self;
     if (path.len == 1 and path[0] == '.') return self;
@@ -176,34 +197,41 @@ pub fn lookupRelativeNoLock(
 
     var next: ?*Vode = null;
 
-    while (segIter.peek()) |segment| : ({
-        log.debug("processed seg: {s}", .{segment});
+    parse: while (segIter.peek()) |segment| : ({
         if (next == null) @panic("internal error: next vode is null");
         if (segIter.peek() != null) ob.unreferenceObject(Vode, node);
         node = next.?;
         // consume segment
         _ = segIter.next();
-    }) parseSegment: {
+    }) {
+        log.debug("processing seg: {s}", .{segment});
+
         if (segment.len == 0) return error.InvalidPath;
 
-        if (node.children != null and (flags & antk_c.OB_VODE_NOSHADOW) != 0)
+        if (node.children != null and ((flags & antk_c.OB_VODE_NOSHADOW) == 0))
             if (node.children.?.get(segment)) |child| {
                 next = child;
-                break :parseSegment;
+                log.debug("child:{any}", .{child});
+                continue :parse;
             };
+
+        log.debug("node = {any}", .{node});
 
         switch (node.mode) {
             .container => return error.NotFound,
             .object => return node,
-            .symlink => |dest| if ((flags & antk_c.OB_VODE_NOFOLLOW) != 0) return node else {
+            .symlink => |dest| if ((flags & antk_c.OB_VODE_NOFOLLOW) == 0) return node else {
                 log.debug("following symlink to '{s}'", .{dest});
                 next = try lookupAbsoluteNoLock(
                     dest.ptr[0..dest.len],
                     antk_c.OB_VODE_OPEN | flags,
                     remaining_path,
                 );
+                continue :parse;
             },
         }
+
+        unreachable;
     }
 
     return node;
@@ -229,7 +257,10 @@ pub fn lookupAbsoluteNoLock(
     flags: Vode.Flags,
     remaining_path: *[]const u8,
 ) !*Vode {
-    assert((flags & antk_c.OB_VODE_OPEN) != 0);
+    if ((flags & antk_c.OB_VODE_OPEN) == 0)
+        log.warn("vfs lookup without OB_VODE_OPEN flag set!", .{});
+
+    log.debug("looking up absolute path: {s}", .{path_});
 
     var path: []const u8 = path_;
     const dir = blk: {
@@ -239,14 +270,14 @@ pub fn lookupAbsoluteNoLock(
         }
         if (path_.len == 0 or path_[0] != '/') return error.InvalidPath;
         path = path_[1..];
-        break :blk try Vode.root.?.lookupRelative(
+        break :blk try Vode.root.?.lookupRelativeNoLock(
             "??/RootFs",
             antk_c.OB_VODE_OPEN,
             remaining_path,
         );
     };
 
-    const node = try dir.lookupRelative(
+    const node = try dir.lookupRelativeNoLock(
         path,
         antk_c.OB_VODE_OPEN | flags,
         remaining_path,

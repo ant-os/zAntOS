@@ -11,16 +11,13 @@ comptime {
 
 /// ABI-safe status code for errors/etc.
 pub const ANTSTATUS = enum(u64) {
-    success = capi.ANTSTATUS_SUCCESS,
-
-    pending = capi.ANTSTATUS_PENDING,
-    uninit = capi.ANTSTATUS_UNINITIALIZED,
-
-
-    unknown_error = capi.ANTSTATUS_UNKNOWN_ERROR,
-    invalid_parameter = capi.ANTSTATUS_INVALID_PARAMETER,
-    unsupported = capi.ANTSTATUS_UNSUPPORTED,
-    no_driver = capi.ANTSTATUS_NO_DRIVER,
-    out_of_memory = capi.ANTSTATUS_OUT_OF_MEMORY,
-    _,
+    success =                   capi.STATUS_SUCCESS,
+    pending =                   capi.STATUS_PENDING,
+    uninit =                    capi.STATUS_UNINITIALIZED,
+    unknown_error =             capi.STATUS_UNKNOWN_ERROR,
+    invalid_parameter =         capi.STATUS_INVALID_PARAMETER,
+    unsupported =               capi.STATUS_UNSUPPORTED,
+    no_driver =                 capi.STATUS_NO_DRIVER,
+    out_of_memory =             capi.STATUS_OUT_OF_MEMORY,
+    more_processing_required =  capi.STATUS_MORE_PROCESSING_REQUIRED,
 };

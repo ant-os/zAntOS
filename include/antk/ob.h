@@ -7,6 +7,7 @@
 typedef struct KO_OBJECT_TYPE KO_OBJECT_TYPE, *PKO_OBJECT_TYPE;
 typedef struct KO_VODE KO_VODE, *PKO_VODE;
 
+
 extern PKO_OBJECT_TYPE *ObObjectType;
 extern PKO_OBJECT_TYPE *IoDriverType;
 extern PKO_OBJECT_TYPE *IoDeviceType; 
@@ -54,18 +55,26 @@ ANTKAPI ANTSTATUS ObQueryObjectInformation(
     OUT_OPT uint32_t *OutControlFlags
 );
 
+#define OB_VODE_INVALID_FLAGS ~(\
+    OB_VODE_NOFOLLOW    \
+    | OB_VODE_NOSHADOW  \
+    | OB_VODE_OPEN      \
+)
 
-#define OB_VODE_NOFOLLOW (0x1 << 1)
-#define OB_VODE_NOSHADOW (0x1 << 2)
-#define OB_VODE_OPEN (0x1 << 16)
+#define _BITFIELD32(shift) (((uint32_t)0x1) << shift)
 
+
+#define OB_VODE_NOFOLLOW _BITFIELD32(1)
+#define OB_VODE_NOSHADOW _BITFIELD32(2)
+#define OB_VODE_OPEN     _BITFIELD32(16)
 
 // ObReferenceObjectByName("//Device/Null", GENERIC_READ | GENERIC_WRITE, KernelMode, &Root, ObVodeType, OB_VODE_OPEN);
 ANTKAPI ANTSTATUS ObReferenceObjectByName(
-    IN char *Path,
+    IN const char *Path,
     IN ACCESS_MASK DesiredAccess,
     IN PROCESSOR_MODE AccessMode,
     OUT void **OutObject,
     IN_OPT PKO_OBJECT_TYPE Type,
-    IN_OPT uint32_t Flags
+    IN_OPT uint32_t Flags,
+    OUT_OPT PASCII_STRING RemainingPath
 );

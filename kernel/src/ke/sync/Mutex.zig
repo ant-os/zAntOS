@@ -10,6 +10,8 @@ const Thread = @import("../../sched/thread.zig");
 const Scheduler = @import("../../sched/scheduler.zig");
 const Awaitable = @import("Awaitable.zig");
 
+const log = std.log.scoped(.mutex);
+
 const Mutex = @This();
 
 awaitable: Awaitable = .{ .pollFn = &_pollThunk },
@@ -56,12 +58,18 @@ pub fn poll(self: *Mutex, thread: *Thread) anyerror!bool {
 }
 
 pub fn unlock(self: *Mutex) void {
-    std.debug.assert(self.owner.cmpxchgStrong(
+    const oldOwner = self.owner.cmpxchgStrong(
         Scheduler.safeCurrentThreadId().uint,
         0,
         .release,
         .monotonic,
-    ) == null);
+    );
+
+    if (oldOwner != null)
+        log.debug(
+            "mutex locked by diffrent thread: owner={d}, current={d}",
+            .{oldOwner.?, Scheduler.safeCurrentThreadId().uint},
+        );
     _ = self.awaitable.wakeSingleNoLock();
     Scheduler.yield();
 }

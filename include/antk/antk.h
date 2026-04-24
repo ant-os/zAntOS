@@ -4,6 +4,7 @@
 #define __C_HEADER_FILE__
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define IN
 #define OUT
@@ -16,16 +17,20 @@ typedef struct KO_DRIVER KO_DRIVER, *PKO_DRIVER;
 
 typedef uint64_t ANTSTATUS;
 
-#define ANTSTATUS_SUCCESS (uint64_t)0
-#define ANTSTATUS_PENDING 0x1000000000000
-#define ANTSTATUS_UNINITIALIZED 0x1000000000001
-#define ANTSTATUS_UNKNOWN_ERROR 0x8000000000000
-#define ANTSTATUS_INVALID_PARAMETER 0x8000000000001
-#define ANTSTATUS_UNSUPPORTED 0x8000000000002
-#define ANTSTATUS_NO_DRIVER 0x8000000000003
-#define ANTSTATUS_OUT_OF_MEMORY 0x8000000000004
-#define ANTSTATUS_NO_ASSOCIATED_OBJECT 0x8000000000005
-#define ANTSTATUS_TYPE_MISMATCH 0x8000000000006
+#define STATUS_SUCCESS (uint64_t)0
+#define STATUS_PENDING 0x1000000000000
+#define STATUS_UNINITIALIZED 0x1000000000001
+#define STATUS_UNKNOWN_ERROR 0x8000000000000
+#define STATUS_INVALID_PARAMETER 0x8000000000001
+#define STATUS_UNSUPPORTED 0x8000000000002
+#define STATUS_NO_DRIVER 0x8000000000003
+#define STATUS_OUT_OF_MEMORY 0x8000000000004
+#define STATUS_NO_ASSOCIATED_OBJECT 0x8000000000005
+#define STATUS_TYPE_MISMATCH 0x8000000000006
+#define STATUS_INVALID_PATH 0x8000000000007
+#define STATUS_MORE_PROCESSING_REQUIRED 0x8000000000008
+#define STATUS_MORE_PROCESSING_REQUIRED 0x8000000000008
+
 
 
 
@@ -53,3 +58,17 @@ ANTKAPI void AntkDebugPrint(IN char *message);
 /// @param ... Format Args
 /// @return Nothing, errors get ignored.
 ANTKAPI void AntkDebugPrintEx(IN char *message, ...);
+
+/// @brief A unmanaged ascii string with the given length, buffer and maximum length.
+typedef struct {
+    /// @brief The backing buffer of the string.
+    /// @warning There is no gurantee this buffer is `NULL`-terminated.
+    /// @note NULL: If `Buffer` is null then the string should ALWAYS be considered empty.
+    char  *Buffer;
+    /// @brief the lenght of the string.
+    /// @invariant must be less or equal to `MaximumLength`.
+    size_t Length;
+    /// @brief the lenght capacity of the string.
+    /// @invariant must not overflow the backing buffer.
+    size_t MaximumLength;
+} ASCII_STRING, *PASCII_STRING;

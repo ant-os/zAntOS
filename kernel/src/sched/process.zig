@@ -63,7 +63,7 @@ pub fn createInitialSystemProcess() !*Process {
         null,
         true,
         null,
-        "//??/InitialSystemProcess",
+        null,
         0x1,
         null,
     );

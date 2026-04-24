@@ -8,7 +8,6 @@ const Irp = @import("../io/Irp.zig");
 const logger = @import("../debug/logger.zig");
 const ob = @import("kmod").ob;
 
-
 const log = std.log.scoped(.antkapi);
 
 pub const c = @cImport({
@@ -50,7 +49,7 @@ pub export fn antkDriverEntry(driver: *Driver, unused: ?*anyopaque) callconv(arc
 
     const status = driver._entryFn(@ptrCast(driver), unused);
 
-    if (status != c.ANTSTATUS_SUCCESS) {
+    if (status != c.STATUS_SUCCESS) {
         driver.state = .poisoned;
         return @enumFromInt(status);
     }
@@ -138,6 +137,47 @@ pub export fn ObDereferenceObject(c_Object: ?*anyopaque) callconv(cc) ANTSTATUS 
     return .success;
 }
 
+pub export fn ObReferenceObjectByName(
+    c_Path: [*c]const u8,
+    c_DesiredAccess: c.ACCESS_MASK,
+    c_AccessMode: c.PROCESSOR_MODE,
+    c_OutObject: ?**anyopaque,
+    c_Type: ?*c.KO_OBJECT_TYPE,
+    c_Flags: u32,
+    c_RemainingPath: ?*c.ASCII_STRING,
+) callconv(cc) ANTSTATUS {
+    if (c_OutObject == null) return .invalid_parameter;
+    if (c_Path == null) return .invalid_parameter;
+
+    if ((c_Flags & c.OB_VODE_INVALID_FLAGS) != 0) return .invalid_parameter;
+
+    const path = c_Path[0..std.mem.len(c_Path)];
+
+    // we need this to convert from zig slices to our C string type.
+    var _zig_remaining_path: []const u8 = undefined;
+
+    c_OutObject.?.* = ob.referenceObjectByName(
+        path,
+        c_DesiredAccess,
+        c_AccessMode == c.KernelMode,
+        _zig_validateObjectType(c_Type),
+        c_Flags,
+        if (c_RemainingPath != null) &_zig_remaining_path else null,
+    ) catch return .unknown_error;
+
+    // translate into our C-String type and return STATUS_MORE_PROCESSING_REQUIRED.
+    if (c_RemainingPath != null and _zig_remaining_path.len != 0) {
+        c_RemainingPath.?.Buffer = @ptrCast(@constCast(_zig_remaining_path.ptr));
+        c_RemainingPath.?.Length = _zig_remaining_path.len;
+        c_RemainingPath.?.MaximumLength = _zig_remaining_path.len;
+        return .more_processing_required;
+    }
+
+    return .success;
+}
+
+
+
 pub export fn ObReferenceObjectByPointer(
     c_Object: ?*anyopaque,
     c_DesiredAccess: c.ACCESS_MASK,
@@ -155,14 +195,14 @@ pub export fn ObReferenceObjectByPointer(
         return .invalid_parameter;
 
     if (c_Type == null) ObReferenceObject(c_Object) else {
-        const type_: *ob.Type = validateObjectType(c_Type) orelse return .invalid_parameter;
+        const type_: *ob.Type = _zig_validateObjectType(c_Type) orelse return .invalid_parameter;
         ob.referenceObject(c_Object.?, type_) catch return .invalid_parameter;
     }
 
     return .success;
 }
 
-fn validateObjectType(
+fn _zig_validateObjectType(
     c_Type: ?*c.KO_OBJECT_TYPE,
 ) ?*ob.Type {
     if (c_Type == null) return null;
@@ -183,7 +223,7 @@ pub export fn ObCreateObject(
 ) callconv(cc) ANTSTATUS {
     if (c_OutObject == null) return .invalid_parameter;
 
-    _ = .{c_Type, c_Name, c_Size};
+    _ = .{ c_Type, c_Name, c_Size };
 
     // const type_: *ob.Type = validateObjectType(c_Type) orelse return .invalid_parameter;
 

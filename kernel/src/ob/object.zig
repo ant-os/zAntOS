@@ -7,6 +7,7 @@ const heap = @import("kmod").heap;
 const log = std.log.scoped(.object_manager);
 const antk_c = @import("../antk/antk.zig").c;
 const antk = @import("../antk/antk.zig");
+const pathutils = @import("../utils/path.zig");
 
 pub const Vode = @import("vode.zig");
 
@@ -29,7 +30,7 @@ pub inline fn getAuxilliaryData(obj: *anyopaque) []u8 {
     return rawPointer[0..getHeader(obj).auxilliary_size];
 }
 
-pub fn allocate(comptime T: type, @"type": ?*Type, size_: usize, auxiliary_size: usize, attributes: ?u32) !*T {
+pub fn allocateFreestanding(comptime T: type, @"type": ?*Type, size_: usize, auxiliary_size: usize, attributes: ?u32) !*T {
     const size = @max(if (T != anyopaque) @sizeOf(T) else 0, if (@"type" != null) @"type".?.size else 0, std.mem.alignForward(usize, size_, 0x10));
     const allocationSize = @sizeOf(Header) + size + auxiliary_size;
     const allocation = try heap.allocator.alignedAlloc(u8, .@"16", allocationSize);
@@ -135,21 +136,14 @@ pub fn createVode(
 ) !*Vode {
     _ = kernel_mode;
 
-    if (directory != null and std.mem.endsWith(u8, path, "/"))
-        return error.InvalidPath;
+    const basename = pathutils.basename(path) orelse return error.InvalidPath;
+    const dirname = pathutils.dirname(path);
 
-    const startOfBasename = std.mem.lastIndexOfScalar(
-        u8,
-        path,
-        '/',
-    ) orelse 0;
-
-    const dirname = path[0..startOfBasename];
-    const realname = path[startOfBasename..];
+    log.debug("creating vode with dirname=\"{s}\" and realname=\"{s}\"", .{ dirname, basename });
 
     var remainingString: []const u8 = &.{};
     const dir = if (directory) |dir| try dir.lookupRelative(
-        path,
+        dirname,
         antk_c.OB_VODE_OPEN,
         &remainingString,
     ) else try Vode.lookupAbsolute(
@@ -160,11 +154,11 @@ pub fn createVode(
 
     if (remainingString.len > 0) return error.NotFound;
 
-    return try dir.insert(realname, modedata);
+    return try dir.insert(basename, modedata);
 }
 
 pub fn createUnnamedType(size: usize, vtable: BaseVTable) !*Type {
-    const ty = try allocate(
+    const ty = try allocateFreestanding(
         Type,
         ObObjectType,
         @sizeOf(Type),
@@ -193,7 +187,7 @@ pub fn createObject(
     if (T == anyopaque and size_override == null) return error.InvalidParameter;
     if (name != null and out_vode != null) return error.InvalidParameter;
 
-    const object = try allocate(
+    const object = try allocateFreestanding(
         T,
         type_,
         if (T != anyopaque and size_override == null) @sizeOf(T) else size_override.?,
@@ -254,6 +248,13 @@ pub fn init() !void {
 
     try Vode.init();
 
+    typeDirectory = try createVode(
+        null,
+        "//ObjectTypes",
+        true,
+        .{ .object = @ptrCast(ObObjectType) },
+    );
+
     try registerKnownType(.thread, @import("kmod").Thread);
     try registerKnownType(.process, @import("kmod").Process);
     try registerKnownType(.device, @import("kmod").Device);
@@ -261,32 +262,38 @@ pub fn init() !void {
     try registerKnownType(.hwio, @import("kmod").HardwareIo);
 }
 
-pub fn getObjectPointerByName(
-    path_: []const u8,
+pub fn referenceObjectByName(
+    path: []const u8,
     desiredAccess: antk_c.ACCESS_MASK,
     kernelMode: bool,
-    type_: ?*Type,
+    @"type": ?*Type,
     flags: Vode.Flags,
+    remaining_path: ?*[]const u8,
 ) !*anyopaque {
+
+    var _dummy_remaining_path: []const u8 = &.{};
+
+    const node = try Vode.lookupAbsolute(
+        path,
+        flags | antk_c.OB_VODE_OPEN,
+        remaining_path orelse &_dummy_remaining_path,
+    );
+    if ((flags & antk_c.OB_VODE_OPEN) != 0) return @ptrCast(node);
+  
+    defer unreferenceObject(Vode, node);
+
+    if (remaining_path == null and _dummy_remaining_path.len != 0)
+        return error.MoreProcessingRequired;
+
+    // NOTE: for now just stub out the access checks rights/etc.
+    if (!kernelMode) log.warn("usermode access checks are not yet implemented", .{});
     _ = desiredAccess;
 
-    var remaining_path: []const u8 = path_;
-
-    const node = try Vode.lookupAbsolute(path_, flags, &remaining_path);
-
-    if ((flags & antk_c.OB_VODE_OPEN) != 0) {
-        if (remaining_path.len == 0) return error.InvalidParameter;
-        return @ptrCast(node);
-    }
-
-    if (!kernelMode) @panic("usermode access checks are not yet implemented");
-
-    // TODO: Check Access rights.
 
     if (node.mode != .object) return error.InvalidPath;
     if (node.mode.object == null) return error.NoAssociatedObject;
 
-    if (type_) |ty| try referenceObject(
+    if (@"type") |ty| try referenceObject(
         node.mode.object.?,
         ty,
     ) else referenceRaw(node.mode.object.?);

@@ -28,7 +28,7 @@ pub const InternalDevice = union(enum) {
 };
 
 pub var knownObjectType: ob.KnownTypeInstance = .{
-    .name = "Hardware I/O",
+    .name = "HardwareIO",
     .base_vtable = .{},
 };
 

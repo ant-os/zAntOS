@@ -112,8 +112,6 @@ pub noinline fn init() !void {
 
     asm volatile ("cli");
 
-    try vfs.init();
-
     const vode = try ob.createVode(
         null,
         "//TestABC",
@@ -123,12 +121,13 @@ pub noinline fn init() !void {
 
     klog.info("vode: {any}", .{vode});
 
-    const vfsdev: *Device = @ptrCast(@alignCast(try ob.getObjectPointerByName(
+    const vfsdev: *Device = @ptrCast(@alignCast(try ob.referenceObjectByName(
         "//TestABC",
         0,
         true,
         null,
         0,
+        null,
     )));
 
     klog.info("result translated to device object: {any}", .{vfsdev});
@@ -293,9 +292,13 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
     var relocsIter = elfHdr.iterateSectionHeadersBuffer(imageData);
 
     while (try relocsIter.next()) |relocHeader| {
-        if (relocHeader.sh_type != elf.SHT_RELA) continue;
 
-        log.info("rela section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}", .{
+        if (relocHeader.sh_type != elf.SHT_RELA) continue;
+        const alloc = (relocHeader.sh_flags & elf.SHF_ALLOC) != 0;
+
+
+
+        log.info("rela section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}, alloc={any}", .{
             symbols.section_name(
                 &elfHdr,
                 imageData,
@@ -305,6 +308,7 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
             relocHeader.sh_size,
             relocHeader.sh_flags,
             relocHeader.sh_type,
+            alloc,
         });
 
         const numRelocations = relocHeader.sh_size / @sizeOf(elf.Rela);
