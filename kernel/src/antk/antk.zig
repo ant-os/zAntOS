@@ -7,6 +7,7 @@ const root = @import("kmod");
 const Irp = @import("../io/Irp.zig");
 const logger = @import("../debug/logger.zig");
 const ob = @import("kmod").ob;
+const kmod = @import("kmod");
 
 const log = std.log.scoped(.antkapi);
 
@@ -24,6 +25,7 @@ pub const IoDriverType = &Driver.knownObjectType.private;
 pub const IoDeviceType = &root.Device.knownObjectType.private;
 pub const PsProcessType = &root.Process.knownObjectType.private;
 pub const PsThreadType = &root.Thread.knownObjectType.private;
+pub const KeMutexType = &root.Mutex.knownObjectType.private;
 
 const _KernelSymbolCollection = @import("ksyms.zig")._KernelSymbolCollection;
 pub export fn AntkResolveKernelSymbol(sym: [*:0]const u8) linksection(".antk_callbacks") callconv(cc) ?*const anyopaque {
@@ -133,7 +135,9 @@ pub export fn ObReferenceObject(c_Object: ?*anyopaque) callconv(cc) void {
 }
 
 pub export fn ObDereferenceObject(c_Object: ?*anyopaque) callconv(cc) ANTSTATUS {
-    if (c_Object) |obj| ob.unreferenceRaw(obj) else return .invalid_parameter;
+    if (c_Object) |obj| {
+        _ = ob.unreferenceRaw(obj);
+    } else return .invalid_parameter;
     return .success;
 }
 
@@ -176,7 +180,18 @@ pub export fn ObReferenceObjectByName(
     return .success;
 }
 
+pub export fn KeInitializeMutex(
+    c_Mutex: *anyopaque,
+) callconv(cc) c.ANTSTATUS {
+    const mutex = ob.referenceKnownObject(c_Mutex, kmod.Mutex) catch return c.STATUS_INVALID_PARAMETER;
+    defer ob.unreferenceObject(kmod.Mutex, mutex);
 
+    log.debug("mutex::init() on mutex with address 0x{x}!", .{@intFromPtr(mutex)});
+
+    mutex.init();
+
+    return c.STATUS_SUCCESS;
+}
 
 pub export fn ObReferenceObjectByPointer(
     c_Object: ?*anyopaque,
@@ -216,29 +231,45 @@ fn _zig_validateObjectType(
 }
 
 pub export fn ObCreateObject(
-    c_Type: ?*c.KO_OBJECT_TYPE,
-    c_Size: usize,
-    c_Name: [*c]const u8,
     c_OutObject: ?**anyopaque,
-) callconv(cc) ANTSTATUS {
-    if (c_OutObject == null) return .invalid_parameter;
+    c_ObjectAttributes: c.POBJECT_ATTRIBUTES,
+    c_Type: ?*c.KO_OBJECT_TYPE,
+    c_ProcessorMode: c.PROCESSOR_MODE,
+    c_SizeOverride: usize,
+) callconv(cc) c.ANTSTATUS {
 
-    _ = .{ c_Type, c_Name, c_Size };
+    const attrs = (c_ObjectAttributes orelse return c.STATUS_INVALID_PARAMETER).*;
+    if (c_OutObject == null) return c.STATUS_INVALID_PARAMETER;
 
-    // const type_: *ob.Type = validateObjectType(c_Type) orelse return .invalid_parameter;
+    const type_: *ob.Type = _zig_validateObjectType(c_Type) orelse return c.STATUS_INVALID_PARAMETER;
 
-    // const name = if (c_Name) |str| str[0..std.mem.len(str)] else null;
+    const name = if (attrs.Name) |str| str[0..std.mem.len(str)] else null;
+    const dir = if (attrs.DirectoryVode != null) (ob.referenceKnownObject(
+        @ptrCast(attrs.DirectoryVode.?),
+        ob.Vode,
+    ) catch return c.STATUS_INVALID_PARAMETER) else null;
 
-    // // const object = ob.allocate(anyopaque, type_, c_Size, name) catch |err| switch (err) {
-    // //     error.OutOfMemory => return .out_of_memory
-    // // };
+    c_OutObject.?.* = ob.createObject(
+        anyopaque,
+        type_,
+        if (c_SizeOverride == 0) null else c_SizeOverride,
+        c_ProcessorMode == c.KernelMode,
+        dir,
+        name,
+        attrs.Attributes,
+        null,
+    ) catch |err| switch (err) {
+        // TODO: Translate errors.
+        else => {
+            log.err("error: {s}", .{@errorName(err)});
+            return c.STATUS_UNKNOWN_ERROR;
+        },
+    };
 
-    // // c_OutObject.?.* = object;
-
-    return .success;
+    return 0;
 }
 
-fn writeOptionalOutParam(comptime T: type, location: ?*T, value: T) void {
+fn _zig_writeOptionalOutParam(comptime T: type, location: ?*T, value: T) void {
     if (location == null) return;
     location.?.* = value;
 }
@@ -251,9 +282,9 @@ pub export fn ObQueryObjectInformation(
 ) callconv(cc) ANTSTATUS {
     const header = if (c_Object) |obj| ob.getHeader(obj) else return .invalid_parameter;
 
-    writeOptionalOutParam(u64, c_OutPointerCount, header.ptr_count.load(.monotonic));
-    writeOptionalOutParam(u64, c_OutHandleCount, header.handle_count.load(.monotonic));
-    writeOptionalOutParam(u64, c_OutControlFlags, header.flags.atomic.load(.monotonic));
+    _zig_writeOptionalOutParam(u64, c_OutPointerCount, header.ptr_count.load(.monotonic));
+    _zig_writeOptionalOutParam(u64, c_OutHandleCount, header.handle_count.load(.monotonic));
+    _zig_writeOptionalOutParam(u64, c_OutControlFlags, header.flags.atomic.load(.monotonic));
 
     return .success;
 }

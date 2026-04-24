@@ -102,12 +102,13 @@ export fn antkStartupSystem(info: *antboot_external.BootInfo) callconv(arch.cc) 
     pfmdb.init() catch unreachable;
     pframe_alloc.init() catch unreachable;
     paging.init() catch unreachable;
-    interrupts.init() catch unreachable;
     heap.init(32) catch unreachable;
     syspte.init() catch unreachable;
     tsc.init() catch unreachable;
 
     ob.init() catch |e| std.debug.panic("failed to create object types: {s}", .{@errorName(e)});
+    interrupts.init() catch unreachable;
+
     kpcb.current().scheduler.init() catch unreachable;
 
     _ = Process.createInitialSystemProcess() catch |e| std.debug.panic(
@@ -135,6 +136,7 @@ export fn antkStartupSystem(info: *antboot_external.BootInfo) callconv(arch.cc) 
         "failed to register dispatch interrupt: {s}",
         .{@errorName(e)},
     );
+
 
     // finally enable the scheduler on the BSP(current core).
     kpcb.current().scheduler.setEnabled(true);

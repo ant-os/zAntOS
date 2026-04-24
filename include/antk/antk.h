@@ -29,7 +29,7 @@ typedef uint64_t ANTSTATUS;
 #define STATUS_TYPE_MISMATCH 0x8000000000006
 #define STATUS_INVALID_PATH 0x8000000000007
 #define STATUS_MORE_PROCESSING_REQUIRED 0x8000000000008
-#define STATUS_MORE_PROCESSING_REQUIRED 0x8000000000008
+#define STATUS_ALREADY_EXISTS 0x8000000000008
 
 
 
@@ -51,13 +51,13 @@ ANTKAPI ANTSTATUS AntkDriverEntry(IN PKO_DRIVER DriverObect, IN void *unused);
 /// @brief Prints a debug message
 /// @param message The message to print.
 /// @return Nothing, errors get ignored.
-ANTKAPI void AntkDebugPrint(IN char *message);
+ANTKAPI void AntkDebugPrint(IN const char *message);
 
 /// @brief Prints a formatted debug message
 /// @param message The message to print.
 /// @param ... Format Args
 /// @return Nothing, errors get ignored.
-ANTKAPI void AntkDebugPrintEx(IN char *message, ...);
+ANTKAPI void AntkDebugPrintEx(IN const char * format, ...) ;
 
 /// @brief A unmanaged ascii string with the given length, buffer and maximum length.
 typedef struct {

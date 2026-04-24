@@ -9,11 +9,9 @@ ANTKAPI ANTSTATUS HandleWrite(PIRP Irp, IRP_PARAMS_WRITE *Parameters, void *Cont
 ANTKAPI ANTSTATUS AntkDriverEntry(PKO_DRIVER DriverObect, void *unused) {
     AntkDebugPrint("test");
 
-    ObReferenceObject(DriverObect);
-
     IoInstallHandler(DriverObect, IRP_MJ_WRITE, HandleWrite);
 
-    return ANTSTATUS_SUCCESS;
+    return STATUS_SUCCESS;
 }
 
 ANTKAPI ANTSTATUS HandleWrite(PIRP Irp, IRP_PARAMS_WRITE *Parameters, void *Context) {
@@ -23,8 +21,8 @@ ANTKAPI ANTSTATUS HandleWrite(PIRP Irp, IRP_PARAMS_WRITE *Parameters, void *Cont
 
     if (StackEntry == NULL) {
         AntkDebugPrint("error: no current stack entry");
-        return ANTSTATUS_UNKNOWN_ERROR;
+        return STATUS_UNKNOWN_ERROR;
     }
 
-    return ANTSTATUS_SUCCESS;
+    return STATUS_SUCCESS;
 }

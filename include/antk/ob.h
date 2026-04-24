@@ -13,20 +13,24 @@ extern PKO_OBJECT_TYPE *IoDriverType;
 extern PKO_OBJECT_TYPE *IoDeviceType; 
 extern PKO_OBJECT_TYPE *PsProcessType; 
 extern PKO_OBJECT_TYPE *PsThreadType;
+extern PKO_OBJECT_TYPE *KeMutexType;
+
 
 #define ObObjectType  (*ObObjectType)
 #define IoDriverType  (*IoDriverType)
 #define IoDeviceType  (*IoDeviceType)
 #define PsProcessType (*PsProcessType)
 #define PsThreadType  (*PsThreadType)
+#define KeMutexType   (*KeMutexType)
+
 
 typedef struct 
 {
     size_t Size;
     PKO_VODE DirectoryVode;
-    char * Name;
+    const char * Name;
     uint32_t Attributes;
-} OBJECT_ATTRIBUTES, POBJECT_ATTRIBUTES;
+} OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES;
 
 ANTKAPI void ObReferenceObject(IN void *Object);
 
@@ -39,12 +43,14 @@ ANTKAPI ANTSTATUS ObReferenceObjectByPointer(
     IN_OPT PKO_OBJECT_TYPE Type
 );
 
+ANTKAPI ANTSTATUS KeInitializeMutex(void *Mutex);
+
 ANTKAPI ANTSTATUS ObCreateObject(
     OUT void **OutObject,
     IN POBJECT_ATTRIBUTES ObjectAttributes,
     IN PKO_OBJECT_TYPE Type,
     IN PROCESSOR_MODE AccessMode,
-    IN_OPT size_t Size
+    IN_OPT size_t SizeOverride
 );
 
 

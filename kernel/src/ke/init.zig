@@ -292,24 +292,30 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
     var relocsIter = elfHdr.iterateSectionHeadersBuffer(imageData);
 
     while (try relocsIter.next()) |relocHeader| {
-
         if (relocHeader.sh_type != elf.SHT_RELA) continue;
-        const alloc = (relocHeader.sh_flags & elf.SHF_ALLOC) != 0;
+        const targetSection = sections[relocHeader.sh_info];
 
-
-
-        log.info("rela section {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}, alloc={any}", .{
+        log.info("rela section {s} targeting {s} at offset 0x{x}, size of {d} bytes and memory range of 0x{x}..0x{x}", .{
             symbols.section_name(
                 &elfHdr,
                 imageData,
                 relocHeader.sh_name,
             ) orelse "<no name>",
+            symbols.section_name(
+                &elfHdr,
+                imageData,
+                targetSection.sh_name,
+            ) orelse "<no name>",
             relocHeader.sh_offset,
             relocHeader.sh_size,
             relocHeader.sh_flags,
             relocHeader.sh_type,
-            alloc,
         });
+
+        if (targetSection.sh_flags & elf.SHF_ALLOC == 0) {
+            log.debug("==> skipping non-alloc section relocation", .{});
+            continue;
+        }
 
         const numRelocations = relocHeader.sh_size / @sizeOf(elf.Rela);
         const rawRelocations: [*]elf.Rela = @ptrCast(@alignCast(imageData[relocHeader.sh_offset..]));
@@ -318,7 +324,6 @@ pub fn loadBootDriver(image: antboot_external.BootInfo.Image) !void {
         for (relocs) |rela| {
             const symbol = &driverSymbols[rela.r_sym()];
             const rtype: elf.R_X86_64 = @enumFromInt(rela.r_type());
-            const targetSection = sections[relocHeader.sh_info];
 
             log.debug("{any}, sym: {any}", .{ rela, symbol });
 

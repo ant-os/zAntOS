@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const heap = @import("../../mm/heap.zig");
+const ob = @import("kmod").ob;
 
 const SpinLock = @import("../../hal/spinlock.zig").SpinLock;
 const Thread = @import("../../sched/thread.zig");
@@ -14,8 +15,16 @@ const log = std.log.scoped(.mutex);
 
 const Mutex = @This();
 
+pub var knownObjectType: ob.KnownTypeInstance = .{
+    .name = "Mutex",
+};
+
 awaitable: Awaitable = .{ .pollFn = &_pollThunk },
 owner: std.atomic.Value(u32) = .init(0),
+
+pub fn init(self: *Mutex) void {
+    self.* = .{};
+}
 
 pub fn lock(self: *Mutex) !void {
     //self.awaitable.lock.lockAt(.sync);
@@ -75,7 +84,18 @@ pub fn unlock(self: *Mutex) void {
 }
 
 pub fn new() !*Mutex {
-    const self = try heap.allocator.create(Mutex);
+    const self = try ob.createObject(
+        Mutex,
+        knownObjectType.getPointer(),
+        null,
+        true,
+        null, 
+        null,
+        null,
+        null,
+    );
+
     self.* = .{};
     return self;
 }
+

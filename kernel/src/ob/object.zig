@@ -88,10 +88,14 @@ pub fn referenceKnownObject(obj: *anyopaque, comptime T: type) error{InvalidPara
 }
 
 pub fn unreferenceObject(comptime T: type, obj: *T) void {
-    referenceRaw(@ptrCast(obj));
+    _ = unreferenceRaw(@ptrCast(obj));
 }
 
-pub fn unreferenceRaw(obj: *anyopaque) void {
+pub fn unrefObjectMustNotDelete(comptime T: type, obj: *T) void {
+    if (unreferenceRaw(@ptrCast(obj))) @panic("internal error: unexpected object deletion");
+}
+
+pub fn unreferenceRaw(obj: *anyopaque) bool {
     const header = getHeader(obj);
     var oldValue: u64 = 1;
     while (header.ptr_count.cmpxchgWeak(
@@ -101,16 +105,16 @@ pub fn unreferenceRaw(obj: *anyopaque) void {
         .monotonic,
     )) |val| : (oldValue = val) {
         // the object is already being cleaned up.
-        if (val == 0) return;
+        if (val == 0) return false;
     }
     if (oldValue == 1) {
         const ty = if (header.type == null) {
             log.warn("object with no type leaked, pointer=0x{x}", .{@intFromPtr(obj)});
-            return;
+            return true;
         } else header.type.?;
 
         // set the `delete_in_progress` flag
-        if (header.flags.set(.delete_in_progress, .acquire) == true) return;
+        if (header.flags.set(.delete_in_progress, .acquire) == true) return false;
 
         _ = if (ty.vtable.deinit) |deinit_cb| deinit_cb(obj);
 
@@ -118,12 +122,16 @@ pub fn unreferenceRaw(obj: *anyopaque) void {
         if (header.ptr_count.load(.seq_cst) > 0) {
             // unset the `delete_in_progress` flag (asserting that it was set) and returns.
             std.debug.assert(header.flags.unset(.delete_in_progress, .release));
-            return;
+            return false;
         }
 
         // TODO: defered freeing.
         heap.allocator.free(header.allocation());
+
+        return true;
     }
+
+    return false;
 }
 
 pub export var ObObjectType: ?*Type = null;
@@ -187,6 +195,11 @@ pub fn createObject(
     if (T == anyopaque and size_override == null) return error.InvalidParameter;
     if (name != null and out_vode != null) return error.InvalidParameter;
 
+    errdefer |e| log.debug(
+        "createObject() failed with: {s}",
+        .{@errorName(e)},
+    );
+
     const object = try allocateFreestanding(
         T,
         type_,
@@ -237,6 +250,22 @@ pub fn createType(name: []const u8, size: usize, vtable: BaseVTable) !*Type {
     return ty;
 }
 
+/// associate a path with an object by create a vode pointing to it.
+/// NOTE: The VODE lives as long as the object, it does NOT increment the object refcount.
+pub fn associateObjectPath(comptime T: type, directory: ?*Vode, path: []const u8, object: *T) !void {
+    if (getHeader(@ptrCast(object)).vode.load(.seq_cst) != null) return error.AlreadyExists;
+
+    const vode = try createVode(
+        directory,
+        path,
+        true,
+        .{ .object = object },
+    );
+
+    // the object passed internally holds a reference
+    unrefObjectMustNotDelete(Vode, vode);
+}
+
 pub fn init() !void {
     ObObjectType = try createUnnamedType(@sizeOf(Type), .{});
     getHeader(@ptrCast(ObObjectType)).type = ObObjectType;
@@ -247,14 +276,29 @@ pub fn init() !void {
     );
 
     try Vode.init();
+    defer Vode.lateInit() catch |e| std.debug.panic(
+        "failed to finalize virtual filesystem: {s}",
+        .{@errorName(e)},
+    );
 
     typeDirectory = try createVode(
         null,
         "//ObjectTypes",
         true,
-        .{ .object = @ptrCast(ObObjectType) },
+        .container,
     );
 
+    _ = try typeDirectory.?.insert(
+        "ObjectType",
+        .{ .object = ObObjectType.? },
+    );
+
+    _ = try typeDirectory.?.insert(
+        "Vode",
+        .{ .object = Vode.knownObjectType.getPointer() },
+    );
+
+    try registerKnownType(.mutex, @import("kmod").Mutex);
     try registerKnownType(.thread, @import("kmod").Thread);
     try registerKnownType(.process, @import("kmod").Process);
     try registerKnownType(.device, @import("kmod").Device);
@@ -270,7 +314,6 @@ pub fn referenceObjectByName(
     flags: Vode.Flags,
     remaining_path: ?*[]const u8,
 ) !*anyopaque {
-
     var _dummy_remaining_path: []const u8 = &.{};
 
     const node = try Vode.lookupAbsolute(
@@ -279,7 +322,7 @@ pub fn referenceObjectByName(
         remaining_path orelse &_dummy_remaining_path,
     );
     if ((flags & antk_c.OB_VODE_OPEN) != 0) return @ptrCast(node);
-  
+
     defer unreferenceObject(Vode, node);
 
     if (remaining_path == null and _dummy_remaining_path.len != 0)
@@ -288,7 +331,6 @@ pub fn referenceObjectByName(
     // NOTE: for now just stub out the access checks rights/etc.
     if (!kernelMode) log.warn("usermode access checks are not yet implemented", .{});
     _ = desiredAccess;
-
 
     if (node.mode != .object) return error.InvalidPath;
     if (node.mode.object == null) return error.NoAssociatedObject;

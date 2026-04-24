@@ -21,11 +21,23 @@ pub const Modedata = union(enum) {
 
 /// Weak reference to the parent of the current node. If root node or out-of-tree, this will be null.
 parent: ?*Vode = null,
-name: [:0]const u8,
+name: []const u8,
 children: ?std.StringHashMapUnmanaged(*Vode) = .empty,
 mode: Modedata = .container,
 
 var global_lock: ?*Mutex = null;
+
+inline fn lock() !void {
+    if (global_lock == null) return else try global_lock.?.lock();
+}
+
+inline fn unlock() void {
+    if (global_lock == null) return else global_lock.?.unlock();
+}
+
+pub fn lateInit() !void {
+    global_lock = try Mutex.new();
+}
 
 /// `//`, it will only be null if the the VFS has not been initialized yet.
 pub var root: ?*Vode = null;
@@ -60,8 +72,8 @@ pub fn insert(
 ) !*Vode {
     if (name_.len == 0 or std.mem.eql(u8, ".", name_)) return error.InvalidParameter;
 
-    try global_lock.?.lock();
-    defer global_lock.?.unlock();
+    try lock();
+    defer unlock();
 
     const children = if (self.children != null) &self.children.? else return error.InvalidParameter;
 
@@ -80,7 +92,7 @@ pub fn insert(
     @memcpy(capturedName.ptr, name_);
 
     child.* = .{
-        .name = capturedName[0..(capturedName.len - 1) :0],
+        .name = capturedName[0..name_.len],
         .mode = mode,
         .children = .empty,
         .parent = self,
@@ -100,6 +112,7 @@ pub fn insert(
     switch (mode) {
         .object => |obj| blk: {
             if (obj == null) break :blk;
+
             const header = ob.getHeader(@ptrCast(obj));
 
             if (header.vode.cmpxchgStrong(
@@ -107,7 +120,7 @@ pub fn insert(
                 child,
                 .seq_cst,
                 .seq_cst,
-            ) != null) return error.AlreadyBound;
+            ) != null) return error.AlreadyExists;
         },
         else => {},
     }
@@ -124,8 +137,6 @@ pub fn captureName(name: []const u8) [:0]const u8 {
 
 pub fn init() !void {
     std.debug.assert(global_lock == null);
-
-    global_lock = try Mutex.new();
 
     root = try ob.createObject(
         Vode,
@@ -159,8 +170,8 @@ pub fn lookupRelative(
 ) !*Vode {
     if (path.len == 0 or (path.len == 1 and path[0] == '.')) return self;
 
-    try global_lock.?.lock();
-    defer global_lock.?.unlock();
+    try lock();
+    defer unlock();
 
     return lookupRelativeNoLock(
         self,
@@ -242,8 +253,8 @@ pub fn lookupAbsolute(
     flags: Vode.Flags,
     remaining_path: *[]const u8,
 ) !*Vode {
-    try global_lock.?.lock();
-    defer global_lock.?.unlock();
+    try lock();
+    defer unlock();
 
     return lookupAbsoluteNoLock(
         path,
